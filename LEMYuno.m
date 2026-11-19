@@ -279,7 +279,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
     if(!animated||UIAccessibilityIsReduceMotionEnabled()){
         [pill.layer removeAllAnimations];pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;fluidVisual(pill,NO);
     }else{
-        [UIView animateWithDuration:.40 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;} completion:nil];
+        [UIView animateWithDuration:.40 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;fluidVisual(pill,NO);} completion:nil];
     }
 }
 @interface LEMGlass18Drag : NSObject<UIGestureRecognizerDelegate>
