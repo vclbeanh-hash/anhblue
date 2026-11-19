@@ -316,6 +316,113 @@ static void installSettings(void){
     origOrder=method_getImplementation(om);
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
+
+// v0.4.1: settings entry independent of YouTube's changing category model.
+@interface LEMYunoPreferencesController : UITableViewController
+@property(nonatomic,strong) NSArray<NSDictionary *> *options;
+@end
+@implementation LEMYunoPreferencesController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title=@"LEM Yuno";
+    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(lemClose)];
+    self.options=@[
+      @{@"key":Kad,@"title":@"Chặn quảng cáo",@"note":@"Giảm quảng cáo (thử nghiệm)"},
+      @{@"key":Kbg,@"title":@"Phát nền",@"note":@"Nghe khi tắt màn hình"},
+      @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
+      @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
+      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Thanh điều hướng (thử nghiệm)"},
+      @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Tùy chọn thử nghiệm"}
+    ];
+    self.tableView.rowHeight=66;
+}
+- (void)lemClose {[self dismissViewControllerAnimated:YES completion:nil];}
+- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self.tableView reloadData];}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
+- (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.4.1 • YouTube 21.33.6";}
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
+    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    if(ip.section==0){
+        NSDictionary *row=self.options[ip.row]; NSString *key=row[@"key"];
+        cell.textLabel.text=row[@"title"];cell.detailTextLabel.text=row[@"note"];cell.detailTextLabel.numberOfLines=2;
+        UISwitch *sw=[UISwitch new];sw.on=enabled(key);sw.tag=ip.row;
+        BOOL supported=([key isEqual:Kad]?origAd!=NULL:[key isEqual:Kbg]?(origBG||origML)!=0:([key isEqual:Ksb]||[key isEqual:Khd])?origTick!=NULL:[key isEqual:Kglass]?origPivot!=NULL:origMini!=NULL);
+        sw.enabled=supported; if(!supported)cell.detailTextLabel.text=@"Không tìm thấy hook trên bản này";
+        [sw addTarget:self action:@selector(lemToggle:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView=sw;cell.selectionStyle=UITableViewCellSelectionStyleNone;
+    }else{
+        cell.textLabel.text=@"Tốc độ mặc định";cell.detailTextLabel.text=[NSString stringWithFormat:@"%gx",savedRate()];cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    }
+    return cell;
+}
+- (void)lemToggle:(UISwitch *)sw{
+    if(sw.tag<0||sw.tag>=self.options.count)return;
+    NSString *key=self.options[sw.tag][@"key"];
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:key];
+    if([key isEqual:Ksb]&&!sw.on)resetSponsor();if([key isEqual:Khd])qualityID=nil;
+}
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip{
+    [t deselectRowAtIndexPath:ip animated:YES];if(ip.section!=1)return;
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Tốc độ mặc định" message:nil preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf=self;
+    for(NSNumber *n in rates()){
+        double v=n.doubleValue;
+        [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%gx%@",v,fabs(savedRate()-v)<.001?@" ✓":@""] style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){
+            [NSUserDefaults.standardUserDefaults setDouble:v forKey:Krate];
+            UIViewController *p=activeOverlay;if(!applyRate(p,v))applyRate(p.parentViewController,v);
+            [weakSelf.tableView reloadData];
+        }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];[self presentViewController:a animated:YES completion:nil];
+}
+@end
+static char lemEntryKey;
+static IMP origSettingsLayout,origSearchSettingsLayout;
+static void openLem(UIViewController *t,SEL s,id sender){
+    (void)s;(void)sender;
+    if(t.presentedViewController)return;
+    LEMYunoPreferencesController *p=[[LEMYunoPreferencesController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:p];
+    nav.modalPresentationStyle=UIModalPresentationPageSheet;
+    [t presentViewController:nav animated:YES completion:nil];
+}
+static void entry(UIViewController *t){
+    UIView *v=t.viewIfLoaded;
+    if(!v.window||v.bounds.size.width<200||v.bounds.size.height<150)return;
+    // Prefer the outer settings controller when the searchable view is a child.
+    UIViewController *parent=t.parentViewController;
+    Class top=NSClassFromString(@"YTSettingsViewController");
+    Class search=NSClassFromString(@"YTSearchableSettingsViewController");
+    if(parent&&((top&&[parent isKindOfClass:top])||(search&&[parent isKindOfClass:search])))return;
+    UIButton *b=objc_getAssociatedObject(t,&lemEntryKey);
+    if(!b){
+      b=[UIButton buttonWithType:UIButtonTypeSystem];
+      [b setTitle:@"LEM Yuno" forState:UIControlStateNormal];
+      b.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+      b.accessibilityIdentifier=@"LEM.Yuno.Settings.Entry";
+      b.backgroundColor=UIColor.secondarySystemBackgroundColor;b.layer.cornerRadius=14;
+      b.layer.borderWidth=.5;b.layer.borderColor=UIColor.separatorColor.CGColor;
+      [b addTarget:t action:NSSelectorFromString(@"lemYunoOpenPreferences:") forControlEvents:UIControlEventTouchUpInside];
+      [v addSubview:b];objc_setAssociatedObject(t,&lemEntryKey,b,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    b.frame=CGRectMake(v.bounds.size.width-v.safeAreaInsets.right-106,v.safeAreaInsets.top+7,94,32);
+    [v bringSubviewToFront:b];
+}
+static void settingsLayout(UIViewController *t,SEL s){((void(*)(id,SEL))origSettingsLayout)(t,s);entry(t);}
+static void searchSettingsLayout(UIViewController *t,SEL s){((void(*)(id,SEL))origSearchSettingsLayout)(t,s);entry(t);}
+static void installSettingsEntry(void){
+    Class a=NSClassFromString(@"YTSettingsViewController"),b=NSClassFromString(@"YTSearchableSettingsViewController");
+    SEL action=NSSelectorFromString(@"lemYunoOpenPreferences:");
+    if(a&&[a isSubclassOfClass:UIViewController.class]){
+        class_addMethod(a,action,(IMP)openLem,"v@:@");origSettingsLayout=hook(a,@selector(viewDidLayoutSubviews),(IMP)settingsLayout,NO);
+    }
+    if(b&&b!=a&&[b isSubclassOfClass:UIViewController.class]){
+        if(!class_getInstanceMethod(b,action))class_addMethod(b,action,(IMP)openLem,"v@:@");
+        origSearchSettingsLayout=hook(b,@selector(viewDidLayoutSubviews),(IMP)searchSettingsLayout,NO);
+    }
+}
 __attribute__((constructor)) static void initialize(void){
  @autoreleasepool {
   NSBundle *bundle=NSBundle.mainBundle;
@@ -330,8 +437,8 @@ __attribute__((constructor)) static void initialize(void){
     origML=hook(NSClassFromString(@"MLVideo"),NSSelectorFromString(@"playableInBackground"),(IMP)yesML,YES);
     origAd=hook(NSClassFromString(@"YTIPlayerResponse"),NSSelectorFromString(@"isMonetized"),(IMP)noAd,YES);
     installExtra();
-    installSettings();
-    NSLog(@"[LEMYuno] Loaded settings=%d background=%d ad=%d",origOrder!=NULL,(origBG||origML)!=0,origAd!=NULL);
+    installSettingsEntry();
+    NSLog(@"[LEMYuno] Loaded settings=%d background=%d ad=%d",(origSettingsLayout||origSearchSettingsLayout)!=0,(origBG||origML)!=0,origAd!=NULL);
   });
  }
 }
