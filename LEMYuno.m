@@ -1,6 +1,6 @@
-/* LEM Yuno v0.6 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v0.7 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
-   Design reference: https://github.com/danielkanan/Yuno/tree/v1.0.0 */
+   Design reference: https://github.com/danielkanan/Yuno/tree/v1.1.1 */
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
@@ -236,7 +236,7 @@ static void tick(id t,SEL s,id v,id tm){
     if(NSThread.isMainThread)process();else dispatch_async(dispatch_get_main_queue(),process);
 }
 static BOOL mini(id t,SEL s){return enabled(Kmini)?NO:((BOOL(*)(id,SEL))origMini)(t,s);}
-// v0.6 — floating glass shell, no changes to native tab frames or hit testing.
+// v0.7 — floating glass shell, no changes to native tab frames or hit testing.
 static char shellKey,oldHiddenKey,oldMaskKey,oldContentColorKey;
 static __weak UIView *lastPivotView;
 static void restoreHidden(UIView *v){
@@ -347,6 +347,193 @@ static void pivot(UIView *t,SEL s){
     if(shell.superview!=t)[t addSubview:shell];else [t bringSubviewToFront:shell];
     if(!CGRectEqualToRect(shell.frame,f))shell.frame=f;
 }
+
+// v0.7 — Yuno 1.1.1 inspired glass surfaces + separately guarded ad filters.
+// Native iOS controls remain in place; only decorative views are added.
+static char surfaceKey,surfaceRimKey,surfaceBackgroundKey;
+static NSHashTable<UIView *> *glassSurfaces;
+static NSUInteger glassHookCount,adHookCount;
+static BOOL directMethod(Class c,SEL sel){
+    if(!c)return NO;unsigned int count=0;
+    Method *list=class_copyMethodList(c,&count);
+    BOOL found=NO;for(unsigned int i=0;i<count;i++){if(method_getName(list[i])==sel){found=YES;break;}}
+    free(list);return found;
+}
+static void decorateSurface(UIView *v,CGFloat radius,BOOL rimOnly){
+    if(!v||[v isKindOfClass:UIVisualEffectView.class])return;
+    UIVisualEffectView *blur=objc_getAssociatedObject(v,&surfaceKey);
+    LEMYunoGlassShell *rim=objc_getAssociatedObject(v,&surfaceRimKey);
+    if(!enabled(Kglass)){
+        [blur removeFromSuperview];[rim removeFromSuperview];
+        objc_setAssociatedObject(v,&surfaceKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v,&surfaceRimKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        restoreBackground(v,&surfaceBackgroundKey);return;
+    }
+    CGRect f=v.bounds;
+    if(!v.window||f.size.width<24||f.size.height<22||f.size.height>210)return;
+    [glassSurfaces addObject:v];
+    CGFloat rad=MIN(radius,MIN(f.size.width,f.size.height)*.5);
+    if(!rimOnly){
+        clearBackground(v,&surfaceBackgroundKey);
+        if(!blur){
+            blur=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+            blur.userInteractionEnabled=NO;blur.clipsToBounds=YES;blur.layer.cornerCurve=kCACornerCurveContinuous;
+            blur.contentView.backgroundColor=[UIColor colorWithWhite:1 alpha:.035];
+            objc_setAssociatedObject(v,&surfaceKey,blur,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if(blur.superview!=v)[v insertSubview:blur atIndex:0];else if(v.subviews.firstObject!=blur)[v sendSubviewToBack:blur];
+        if(!CGRectEqualToRect(blur.frame,f))blur.frame=f;
+        blur.layer.cornerRadius=rad;
+    }
+    if(!rim){rim=[[LEMYunoGlassShell alloc] initWithFrame:f];rim.alpha=rimOnly?.76:.55;objc_setAssociatedObject(v,&surfaceRimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(rim.superview!=v)[v addSubview:rim];else if(v.subviews.lastObject!=rim)[v bringSubviewToFront:rim];
+    if(!CGRectEqualToRect(rim.frame,f))rim.frame=f;
+    rim.layer.cornerRadius=rad;rim.layer.cornerCurve=kCACornerCurveContinuous;
+    rim.rimMask.path=[UIBezierPath bezierPathWithRoundedRect:CGRectInset(rim.bounds,.8,.8) cornerRadius:MAX(1,rad-.8)].CGPath;
+}
+static void decorateGetter(UIView *parent,NSString *name,CGFloat rad,BOOL rimOnly){
+    id v=getObj(parent,name);
+    if([v isKindOfClass:UIView.class]&&v!=parent&&[v isDescendantOfView:parent])decorateSurface(v,rad,rimOnly);
+}
+static void installSurface(NSString *name,CGFloat radius,BOOL rimOnly,NSArray<NSString *> *children){
+    Class c=NSClassFromString(name);SEL sel=@selector(layoutSubviews);
+    if(!c||![c isSubclassOfClass:UIView.class]||!directMethod(c,sel))return;
+    Method m=class_getInstanceMethod(c,sel);
+    if(!m||method_getNumberOfArguments(m)!=2)return;
+    char ret[16]={0};method_getReturnType(m,ret,sizeof ret);if(ret[0]!='v')return;
+    IMP old=method_getImplementation(m);
+    IMP impl=imp_implementationWithBlock(^(UIView *v){
+        ((void(*)(id,SEL))old)(v,sel);
+        @try{
+            if(radius>0)decorateSurface(v,radius,rimOnly);
+            for(NSString *g in children)decorateGetter(v,g,19,NO);
+        }@catch(NSException *e){NSLog(@"[LEMYuno] surface %@: %@",name,e.reason);}
+    });
+    class_replaceMethod(c,sel,impl,method_getTypeEncoding(m));glassHookCount++;
+}
+static void installGlassSurfaces(void){
+    glassSurfaces=[NSHashTable weakObjectsHashTable];
+    installSurface(@"YTNavigationBar",18,NO,@[]);
+    installSurface(@"YTFilterChipBarView",18,NO,@[]);
+    installSurface(@"YTChipCloudChipView",14,YES,@[]);
+    installSurface(@"YTSearchBoxView",20,NO,@[]);
+    installSurface(@"YTWatchFloatingMiniplayerWithPersistentControlsView",15,YES,@[]);
+    installSurface(@"YTWatchFloatingMiniplayerCircularBackgroundView",24,NO,@[]);
+    installSurface(@"YTWatchFloatingMiniplayerActionButtonView",0,YES,@[@"playPauseButton",@"replayNextButton"]);
+    installSurface(@"YTReelBottomActionBarView",18,NO,@[]);
+    installSurface(@"YTReelTopBarView",18,NO,@[]);
+    installSurface(@"YTInlinePlayerBarContainerView",0,YES,@[@"enterExitFullscreenButton",@"enterFullscreenButton",@"exitFullscreenButton",@"currentTimeTitleView"]);
+    installSurface(@"YTMainAppVideoPlayerOverlayView",0,YES,@[@"playbackRouteButton",@"overflowButton"]);
+}
+static void refreshGlass(void){
+    [lastPivotView setNeedsLayout];
+    for(UIView *v in glassSurfaces.allObjects){
+        if(!enabled(Kglass))decorateSurface(v,20,YES);
+        [v setNeedsLayout];
+    }
+}
+static BOOL exactBool(id obj,NSString *name){
+    SEL sel=NSSelectorFromString(name);
+    if(!available(obj,sel,2))return NO;
+    Method m=class_getInstanceMethod([obj class],sel);
+    char rt[8]={0};method_getReturnType(m,rt,sizeof rt);
+    if(rt[0]!='B'&&rt[0]!='c')return NO;
+    return ((BOOL(*)(id,SEL))objc_msgSend)(obj,sel);
+}
+static BOOL isAdElement(id e){
+    if(!e)return NO;
+    if(exactBool(e,@"hasShoppingCompanionAdRenderer")||getObj(e,@"companionAd"))return YES;
+    id compat=getObj(e,@"compatibilityOptions");
+    if(exactBool(compat,@"hasAdLoggingData")||exactBool(compat,@"hasAdLayoutLoggingData"))return YES;
+    static NSSet *markers;static dispatch_once_t once;
+    dispatch_once(&once,^{markers=[NSSet setWithArray:@[@"brand_promo",@"product_carousel",@"product_engagement_panel",@"text_search_ad",@"text_image_button_layout",@"feed_ad_metadata",@"ad_slot",@"in_feed_ad",@"promoted_video",@"display_ad"]];});
+    id d=[e description];
+    return [d isKindOfClass:NSString.class]&&[markers containsObject:d];
+}
+static BOOL isAdRenderer(id row){
+    if(!row)return NO;
+    static NSArray *keys;static dispatch_once_t once;
+    dispatch_once(&once,^{keys=@[
+      @"hasAdSlotRenderer",@"hasPromotedVideoRenderer",@"hasCompactPromotedVideoRenderer",
+      @"hasPromotedVideoInlineMutedRenderer",@"hasPromotedSparklesTextHomeRenderer",
+      @"hasPromotedSparklesTextSearchRenderer",@"hasPromotedSparklesTextCtdHomeRenderer",
+      @"hasPromotedSparklesTextCtdHomeCompactFormRenderer",@"hasPromotedAppInstallRenderer",
+      @"hasPromotedDiscoveryAppPromoCompactFormRenderer",@"hasPromotedTextBannerRenderer",
+      @"hasPromotedSparklesTextCtdWatchWideFormRenderer",@"hasPromotedSparklesTextCtdWatchGridFormRenderer",
+      @"hasPromotedSparklesTextProductHomeRenderer",@"hasPromotedSparklesTextProductWatchRenderer",
+      @"hasPromotedSparklesTextWatchWideFormRenderer",@"hasPromotedSparklesTextWatchGridFormRenderer",
+      @"hasSearchPyvRenderer",@"hasVideoMastheadAdRenderer",@"hasDisplayAdViewModel",
+      @"hasCompanionAdRenderer",@"hasShoppingCompanionAdRenderer"
+    ];});
+    for(NSString *k in keys)if(exactBool(row,k))return YES;
+    return isAdElement(getObj(row,@"elementRenderer"));
+}
+static void filterSectionModel(id model){
+    if(!enabled(Kad)||!model)return;
+    @try{
+        id rows=getObj(model,@"contentsArray");
+        if(![rows isKindOfClass:NSMutableArray.class])return;
+        NSMutableIndexSet *drop=[NSMutableIndexSet indexSet];
+        for(NSUInteger i=0;i<[rows count];i++){
+            id row=rows[i];
+            if(isAdRenderer(row)){[drop addIndex:i];continue;}
+            id sect=getObj(row,@"itemSectionRenderer");
+            id items=getObj(sect,@"contentsArray");
+            if(![items isKindOfClass:NSMutableArray.class]||![items count])continue;
+            NSIndexSet *ads=[items indexesOfObjectsPassingTest:^BOOL(id item,NSUInteger idx,BOOL *stop){return isAdRenderer(item);}];
+            if(ads.count==[items count])[drop addIndex:i];else if(ads.count)[items removeObjectsAtIndexes:ads];
+        }
+        if(drop.count)[rows removeObjectsAtIndexes:drop];
+    }@catch(NSException *e){NSLog(@"[LEMYuno] filter: %@",e.reason);}
+}
+static IMP origFeedLoad,origFeedSetup,origElement,origCue;
+static void feedLoad(id t,SEL s,id model){filterSectionModel(model);((void(*)(id,SEL,id))origFeedLoad)(t,s,model);}
+static void feedSetup(id t,SEL s,id model,BOOL more,BOOL refreshing,BOOL preserve){filterSectionModel(model);((void(*)(id,SEL,id,BOOL,BOOL,BOOL))origFeedSetup)(t,s,model,more,refreshing,preserve);}
+static id elementData(id t,SEL s){
+    // Avoid recursively describing a protobuf in its data accessor.
+    if(enabled(Kad)){
+        @try{
+            id opts=getObj(t,@"compatibilityOptions");
+            if(exactBool(opts,@"hasAdLoggingData")||exactBool(opts,@"hasAdLayoutLoggingData")||exactBool(t,@"hasShoppingCompanionAdRenderer"))return [NSData data];
+        }@catch(NSException *e){}
+    }
+    return ((id(*)(id,SEL))origElement)(t,s);
+}
+static BOOL cueAds(id t,SEL s){return enabled(Kad)?NO:((BOOL(*)(id,SEL))origCue)(t,s);}
+static IMP installTyped(Class c,NSString *name,IMP replacement,const char *types,unsigned int n){
+    if(!c)return NULL;SEL sel=NSSelectorFromString(name);
+    Method m=class_getInstanceMethod(c,sel);
+    if(!m||method_getNumberOfArguments(m)!=n)return NULL;
+    char b[16]={0};method_getReturnType(m,b,sizeof b);
+    if(b[0]!=types[0])return NULL;
+    for(unsigned int i=2;i<n;i++){method_getArgumentType(m,i,b,sizeof b);if(b[0]!=types[i-1])return NULL;}
+    IMP old=method_getImplementation(m);if(!old)return NULL;
+    class_replaceMethod(c,sel,replacement,method_getTypeEncoding(m));adHookCount++;return old;
+}
+static void installAdFilters(void){
+    Class feed=NSClassFromString(@"YTSectionListViewController");
+    origFeedLoad=installTyped(feed,@"loadWithModel:",(IMP)feedLoad,"v@",3);
+    origFeedSetup=installTyped(feed,@"setupSectionListWithModel:isLoadingMore:isRefreshingFromContinuation:shouldPreserveHeaderOnRefresh:",(IMP)feedSetup,"v@BBB",6);
+    origElement=installTyped(NSClassFromString(@"YTIElementRenderer"),@"elementData",(IMP)elementData,"@",2);
+    Class response=NSClassFromString(@"YTIPlayerResponse");
+    origCue=hook(response,NSSelectorFromString(@"isCuepointAdsEnabled"),(IMP)cueAds,YES);
+    // Empty only explicit ad-only arrays, when their accessor is actually present.
+    for(NSString *name in @[@"adPlacementsArray",@"adSlotsArray",@"playerAdsArray"]){
+        SEL sel=NSSelectorFromString(name);
+        if(![response instancesRespondToSelector:sel])continue;
+        Method m=class_getInstanceMethod(response,sel);char t[8]={0};
+        if(!m||method_getNumberOfArguments(m)!=2)continue;
+        method_getReturnType(m,t,sizeof t);if(t[0]!='@')continue;
+        IMP old=method_getImplementation(m);
+        IMP impl=imp_implementationWithBlock(^id(id obj){
+            id original=((id(*)(id,SEL))old)(obj,sel);
+            if(enabled(Kad)&&[original isKindOfClass:NSArray.class])return [NSMutableArray array];
+            return original;
+        });
+        class_replaceMethod(response,sel,impl,method_getTypeEncoding(m));adHookCount++;
+    }
+    NSLog(@"[LEMYuno] ad filters %lu",(unsigned long)adHookCount);
+}
 static void installExtra(void){
     Class pc=NSClassFromString(@"YTPlayerViewController");
     SEL ts=NSSelectorFromString(@"potentiallyMutatedSingleVideo:currentVideoTimeDidChange:");
@@ -365,7 +552,7 @@ static id switches(NSString *title,NSString *description,NSString *key){
     SEL s=NSSelectorFromString(@"switchItemWithTitle:titleDescription:accessibilityIdentifier:switchOn:switchBlock:settingItemId:");
     if(!available(c,s,8))return nil;
     BOOL (^block)(id,BOOL)=^BOOL(id cell,BOOL on){
-        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];if([key isEqual:Ksb]&&!on)resetSponsor();if([key isEqual:Khd])qualityID=nil;if([key isEqual:Kglass])[lastPivotView setNeedsLayout];return YES;
+        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];if([key isEqual:Ksb]&&!on)resetSponsor();if([key isEqual:Khd])qualityID=nil;if([key isEqual:Kglass])refreshGlass();return YES;
     };
     return ((id(*)(id,SEL,id,id,id,BOOL,id,NSInteger))objc_msgSend)(c,s,title,description,key,enabled(key),block,0);
 }
@@ -410,8 +597,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.6",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.6",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.7",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.7",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -435,7 +622,7 @@ static void installSettings(void){
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
 
-// v0.6: settings entry independent of YouTube's changing category model.
+// v0.7: settings entry independent of YouTube's changing category model.
 @interface LEMYunoPreferencesController : UITableViewController
 @property(nonatomic,strong) NSArray<NSDictionary *> *options;
 @end
@@ -445,11 +632,11 @@ static void installSettings(void){
     self.title=@"LEM Yuno";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(lemClose)];
     self.options=@[
-      @{@"key":Kad,@"title":@"Chặn quảng cáo",@"note":@"Giảm quảng cáo (thử nghiệm)"},
+      @{@"key":Kad,@"title":@"Chặn quảng cáo",@"note":@"Lọc quảng cáo video, trang chủ và tìm kiếm"},
       @{@"key":Kbg,@"title":@"Phát nền",@"note":@"Nghe khi tắt màn hình"},
       @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
       @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
-      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Thanh kính nổi, viền phản sáng"},
+      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Kính nổi: thanh dưới, bộ lọc, trình phát, Shorts"},
       @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Cho phép phát trong mini player khi chế độ chỉ tạm dừng được yêu cầu"}
     ];
     self.tableView.rowHeight=66;
@@ -459,14 +646,14 @@ static void installSettings(void){
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.6 • YouTube 21.33.6";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.7 • YouTube 21.33.6";}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     if(ip.section==0){
         NSDictionary *row=self.options[ip.row]; NSString *key=row[@"key"];
         cell.textLabel.text=row[@"title"];cell.detailTextLabel.text=row[@"note"];cell.detailTextLabel.numberOfLines=2;
         UISwitch *sw=[UISwitch new];sw.on=enabled(key);sw.tag=ip.row;
-        BOOL supported=([key isEqual:Kad]?origAd!=NULL:[key isEqual:Kbg]?(origBG||origML)!=0:([key isEqual:Ksb]||[key isEqual:Khd])?origTick!=NULL:[key isEqual:Kglass]?origPivot!=NULL:origMini!=NULL);
+        BOOL supported=([key isEqual:Kad]?(origAd!=NULL||adHookCount>0):[key isEqual:Kbg]?(origBG||origML)!=0:([key isEqual:Ksb]||[key isEqual:Khd])?origTick!=NULL:[key isEqual:Kglass]?(origPivot!=NULL||glassHookCount>0):origMini!=NULL);
         sw.enabled=supported; if(!supported){sw.on=NO;cell.detailTextLabel.text=@"Không tìm thấy hook trên bản này";}
         [sw addTarget:self action:@selector(lemToggle:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView=sw;cell.selectionStyle=UITableViewCellSelectionStyleNone;
@@ -555,6 +742,8 @@ __attribute__((constructor)) static void initialize(void){
     origML=hook(NSClassFromString(@"MLVideo"),NSSelectorFromString(@"playableInBackground"),(IMP)yesML,YES);
     origAd=hook(NSClassFromString(@"YTIPlayerResponse"),NSSelectorFromString(@"isMonetized"),(IMP)noAd,YES);
     installExtra();
+    installGlassSurfaces();
+    installAdFilters();
     installSettingsEntry();
     NSLog(@"[LEMYuno] Loaded settings=%d background=%d ad=%d",(origSettingsLayout||origSearchSettingsLayout)!=0,(origBG||origML)!=0,origAd!=NULL);
   });
