@@ -1,4 +1,4 @@
-/* LEM Yuno v0.9 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v1.0 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
    Design reference: https://github.com/danielkanan/Yuno/tree/v1.1.1 */
 #import <UIKit/UIKit.h>
@@ -236,7 +236,7 @@ static void tick(id t,SEL s,id v,id tm){
     if(NSThread.isMainThread)process();else dispatch_async(dispatch_get_main_queue(),process);
 }
 static BOOL mini(id t,SEL s){return enabled(Kmini)?NO:((BOOL(*)(id,SEL))origMini)(t,s);}
-// v0.9 — floating glass shell, no changes to native tab frames or hit testing.
+// v1.0 — floating glass shell, no changes to native tab frames or hit testing.
 static char shellKey,oldHiddenKey,oldMaskKey,oldContentColorKey,indicatorKey,nativeMaskOwnerKey;
 static __weak UIView *lastPivotView;
 static void restoreHidden(UIView *v){
@@ -259,11 +259,88 @@ static void clearBackground(UIView *v,const void *key){
     if(!objc_getAssociatedObject(v,key))objc_setAssociatedObject(v,key,v.backgroundColor?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     v.backgroundColor=UIColor.clearColor;
 }
+// Small, local optical sample. Render only content behind the pivot bar,
+// never the window (which would contain our own overlay).
+static UIView *lemBackdropSource(UIView *pivot,CGRect windowRect){
+    UIView *branch=pivot;
+    for(int level=0;branch.superview&&level<8;level++){
+        UIView *parent=branch.superview;
+        NSArray *siblings=parent.subviews;
+        NSUInteger index=[siblings indexOfObjectIdenticalTo:branch];
+        if(index!=NSNotFound&&index>0){
+            for(NSInteger j=(NSInteger)index-1;j>=0;j--){
+                UIView *candidate=siblings[j];
+                if(candidate.hidden||candidate.alpha<.1||[candidate isKindOfClass:UIControl.class]||[candidate isKindOfClass:UIVisualEffectView.class])continue;
+                CGRect frame=[candidate convertRect:candidate.bounds toView:pivot.window];
+                CGRect hit=CGRectIntersection(frame,windowRect);
+                if(!CGRectIsNull(hit)&&hit.size.width>=windowRect.size.width*.90&&hit.size.height>=windowRect.size.height*.82&&candidate.bounds.size.height>100)return candidate;
+            }
+        }
+        branch=parent;
+    }
+    return nil;
+}
+static CGImageRef lemLensImage(UIView *source,CGRect rect,CGFloat scale) CF_RETURNS_RETAINED;
+static CGImageRef lemLensImage(UIView *source,CGRect rect,CGFloat scale){
+    if(!source||rect.size.width<10||rect.size.height<10)return NULL;
+    size_t w=(size_t)MAX(12,MIN(220,ceil(rect.size.width*scale)));
+    size_t h=(size_t)MAX(12,MIN(64,ceil(rect.size.height*scale)));
+    size_t stride=w*4;
+    CGColorSpaceRef cs=CGColorSpaceCreateDeviceRGB();
+    CGContextRef input=CGBitmapContextCreate(NULL,w,h,8,stride,cs,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGContextRef output=CGBitmapContextCreate(NULL,w,h,8,stride,cs,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if(!input||!output){if(input)CGContextRelease(input);if(output)CGContextRelease(output);return NULL;}
+    CGContextTranslateCTM(input,0,h);
+    CGContextScaleCTM(input,w/rect.size.width,-(CGFloat)h/rect.size.height);
+    CGContextTranslateCTM(input,-rect.origin.x,-rect.origin.y);
+    [source.layer renderInContext:input];
+    unsigned char *a=CGBitmapContextGetData(input),*b=CGBitmapContextGetData(output);
+    int opaque=0;double minL=255,maxL=0;
+    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++){
+        unsigned char *p=a+y*stride+x*4;
+        if(p[3]>200){opaque++;double l=.2126*p[0]+.7152*p[1]+.0722*p[2];if(l<minL)minL=l;if(l>maxL)maxL=l;}
+    }
+    if(opaque<(int)(w*h*.82)||maxL-minL<12){CGContextRelease(input);CGContextRelease(output);return NULL;}
+    // Capsule SDF: pull samples inward along the curved edge, with a small
+    // wavelength-dependent offset. At 0.5x resolution this is cheap.
+    float radius=(float)h*.5f, half=(float)w*.5f;
+    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++){
+        float px=(float)x+.5f-half,py=(float)y+.5f-radius;
+        float cx=fmaxf(-(half-radius),fminf(half-radius,px));
+        float dx=px-cx,dy=py,d=hypotf(dx,dy),edge=radius-d;
+        float u=fmaxf(0.f,fminf(1.f,1.f-edge/9.f));
+        float displacement=5.7f*u*u;
+        float nx=d>.01f?dx/d:0,ny=d>.01f?dy/d:0;
+        unsigned char *q=b+y*stride+x*4;
+        for(int c=0;c<3;c++){
+            float shift=displacement+(1-c)*.38f*u;
+            float sx=(float)x-nx*shift,sy=(float)y-ny*shift;
+            int sum=0,weight=0;
+            for(int yy=-1;yy<=1;yy++)for(int xx=-1;xx<=1;xx++){
+                int ix=MAX(0,MIN((int)w-1,(int)lrintf(sx)+xx));
+                int iy=MAX(0,MIN((int)h-1,(int)lrintf(sy)+yy));
+                int k=xx==0&&yy==0?4:1;
+                sum+=k*a[iy*stride+ix*4+c];weight+=k;
+            }
+            q[c]=(unsigned char)(sum/weight);
+        }
+        q[3]=255;
+    }
+    CGImageRef image=CGBitmapContextCreateImage(output);
+    CGContextRelease(input);CGContextRelease(output);return image;
+}
 @interface LEMYunoGlassShell : UIView
 @property(nonatomic,strong) CAGradientLayer *rim;
 @property(nonatomic,strong) CAShapeLayer *rimMask;
 @property(nonatomic,strong) CAGradientLayer *shine;
 @property(nonatomic) CGFloat shapeRadius;
+@property(nonatomic,weak) UIView *lensHost;
+@property(nonatomic,strong) CALayer *lens;
+@property(nonatomic,strong) CAShapeLayer *lensMask;
+@property(nonatomic,strong) NSTimer *lensTimer;
+@property(nonatomic) CFTimeInterval lensCooldown;
+- (void)enableLensForHost:(UIView *)host;
 @end
 @implementation LEMYunoGlassShell
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -279,6 +356,9 @@ static void clearBackground(UIView *v,const void *key){
         self.shine=[CAGradientLayer layer];self.shine.colors=@[(id)[UIColor colorWithWhite:1 alpha:.025].CGColor,(id)[UIColor colorWithWhite:1 alpha:0].CGColor,(id)[UIColor colorWithWhite:1 alpha:.015].CGColor];
         self.shine.locations=@[@0,@.5,@1];[self.layer insertSublayer:self.shine below:self.rim];
         self.layer.masksToBounds=YES;
+        self.lens=[CALayer layer];self.lens.opacity=.68;self.lens.contentsGravity=kCAGravityResize;
+        self.lensMask=[CAShapeLayer layer];self.lensMask.fillRule=kCAFillRuleEvenOdd;self.lensMask.fillColor=UIColor.blackColor.CGColor;
+        self.lens.mask=self.lensMask;[self.layer insertSublayer:self.lens atIndex:0];
     }return self;
 }
 - (void)layoutSubviews {
@@ -288,8 +368,49 @@ static void clearBackground(UIView *v,const void *key){
     self.layer.cornerRadius=rad;self.layer.cornerCurve=kCACornerCurveContinuous;
     self.rim.frame=self.bounds;self.rimMask.frame=self.bounds;
     self.rimMask.path=[UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds,.8,.8) cornerRadius:rad-.8].CGPath;
-    self.shine.frame=self.bounds;[CATransaction commit];
+    self.shine.frame=self.bounds;self.lens.frame=self.bounds;self.lensMask.frame=self.bounds;
+    UIBezierPath *ring=[UIBezierPath bezierPathWithRoundedRect:self.bounds cornerRadius:rad];
+    CGRect inner=CGRectInset(self.bounds,7,7);
+    if(inner.size.width>0&&inner.size.height>0)[ring appendPath:[UIBezierPath bezierPathWithRoundedRect:inner cornerRadius:MAX(1,rad-7)]];
+    self.lensMask.path=ring.CGPath;
+    [CATransaction commit];
 }
+- (void)updateLens {
+    if(!self.window||!self.lensHost||!enabled(Kglass)||UIAccessibilityIsReduceTransparencyEnabled()||NSProcessInfo.processInfo.lowPowerModeEnabled){
+        self.lens.contents=nil;return;
+    }
+    if(CACurrentMediaTime()<self.lensCooldown)return;
+    CGRect wrect=[self convertRect:self.bounds toView:self.window];
+    UIView *src=lemBackdropSource(self.lensHost,wrect);
+    if(!src){self.lens.contents=nil;return;}
+    CFTimeInterval start=CACurrentMediaTime();
+    @try{
+        CGRect region=[src convertRect:wrect fromView:self.window];
+        CGImageRef im=lemLensImage(src,region,.5);
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        self.lens.contents=im?(__bridge id)im:nil;[CATransaction commit];
+        if(im)CGImageRelease(im);
+    }@catch(NSException *e){self.lens.contents=nil;self.lensCooldown=CACurrentMediaTime()+3;}
+    if(CACurrentMediaTime()-start>.022)self.lensCooldown=CACurrentMediaTime()+1.0;
+}
+- (void)enableLensForHost:(UIView *)host {
+    self.lensHost=host;
+    if(!self.window||self.lensTimer)return;
+    __weak typeof(self) weakSelf=self;
+    self.lensTimer=[NSTimer timerWithTimeInterval:.18 repeats:YES block:^(NSTimer *timer){
+        LEMYunoGlassShell *strong=weakSelf;
+        if(!strong||!strong.window||!strong.lensHost){[timer invalidate];return;}
+        [strong updateLens];
+    }];
+    self.lensTimer.tolerance=.03;
+    [[NSRunLoop mainRunLoop] addTimer:self.lensTimer forMode:NSRunLoopCommonModes];
+}
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if(!self.window){[self.lensTimer invalidate];self.lensTimer=nil;self.lens.contents=nil;}
+    else if(self.lensHost)[self enableLensForHost:self.lensHost];
+}
+- (void)dealloc {[self.lensTimer invalidate];}
 @end
 // Keep the app's native backdrop alive. Its rendered content is preferable
 // to blurring a flat black/color background in a second UIKit effect.
@@ -388,7 +509,7 @@ static void pivot(UIView *t,SEL s){
         if(!CGRectIsNull(target)&&target.size.width>12&&target.size.height>20){
             target=[t convertRect:target toView:holder];
             BOOL dark=t.traitCollection.userInterfaceStyle!=UIUserInterfaceStyleLight;
-            indicator.backgroundColor=dark?[UIColor colorWithWhite:1 alpha:.14]:[UIColor colorWithWhite:1 alpha:.48];
+            indicator.backgroundColor=dark?[UIColor colorWithWhite:1 alpha:.12]:[UIColor colorWithWhite:1 alpha:.32];
             if(indicator.alpha==0||UIAccessibilityIsReduceMotionEnabled()){indicator.frame=target;indicator.alpha=1;indicator.layer.cornerRadius=target.size.height*.5;}
             else if(!CGRectEqualToRect(indicator.frame,target)){
                 [UIView animateWithDuration:.38 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.1 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{indicator.frame=target;indicator.layer.cornerRadius=target.size.height*.5;} completion:nil];
@@ -399,8 +520,9 @@ static void pivot(UIView *t,SEL s){
     shell.shapeRadius=h*.5;
     if(shell.superview!=t)[t addSubview:shell];else if(t.subviews.lastObject!=shell)[t bringSubviewToFront:shell];
     if(!CGRectEqualToRect(shell.frame,f))shell.frame=f;
+    [shell enableLensForHost:t];
 }
-// v0.9 — Yuno 1.1.1 inspired glass surfaces + separately guarded ad filters.
+// v1.0 — Yuno 1.1.1 inspired glass surfaces + separately guarded ad filters.
 // Native iOS controls remain in place; only decorative views are added.
 static char surfaceKey,surfaceRimKey,surfaceBackgroundKey;
 static NSHashTable<UIView *> *glassSurfaces;
@@ -485,8 +607,8 @@ static void installGlassSurfaces(void){
     glassSurfaces=[NSHashTable weakObjectsHashTable];
     // Native iOS 16-compatible frosted chrome. Do not enable iOS 26/27-only APIs.
     for(NSString *flag in @[@"mainAppCoreClientEnableModernIaFrostedBottomBar",@"mainAppCoreClientEnableModernIaFrostedPivotBar",@"mainAppCoreClientEnableModernIaFrostedPivotBarUpdatedBackdrop",@"mainAppCoreClientEnableHomeFrostedTopBar",@"mainAppCoreClientEnableSearchFrostedTopBar",@"enableFrostedGlassForImpPlayerControls",@"enableFrostedGlassMiniplayerControls"])nativeFrostFlag(flag);
-    frostFloat(@"mainAppCoreClientFrostedPivotBarBlurRadius",8.f);
-    frostFloat(@"mainAppCoreClientFrostedPivotBarPaintOpacity",.40f);
+    frostFloat(@"mainAppCoreClientFrostedPivotBarBlurRadius",5.5f);
+    frostFloat(@"mainAppCoreClientFrostedPivotBarPaintOpacity",.12f);
     installSurface(@"YTRightNavigationButtons",24,NO,@[]);
     installSurface(@"YTSearchBoxView",20,NO,@[]);
     installSurface(@"YTWatchFloatingMiniplayerWithPersistentControlsView",20,YES,@[]);
@@ -712,8 +834,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.9",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.9",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v1.0",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v1.0",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -737,7 +859,7 @@ static void installSettings(void){
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
 
-// v0.9: settings entry independent of YouTube's changing category model.
+// v1.0: settings entry independent of YouTube's changing category model.
 @interface LEMYunoPreferencesController : UITableViewController
 @property(nonatomic,strong) NSArray<NSDictionary *> *options;
 @end
@@ -751,7 +873,7 @@ static void installSettings(void){
       @{@"key":Kbg,@"title":@"Phát nền",@"note":@"Nghe khi tắt màn hình"},
       @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
       @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
-      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Backdrop màu thật, tab trượt mềm (cần mở lại app)"},
+      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Kính trong, mô phỏng khúc xạ mép (thử nghiệm)"},
       @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Cho phép phát trong mini player khi chế độ chỉ tạm dừng được yêu cầu"}
     ];
     self.tableView.rowHeight=66;
@@ -761,7 +883,7 @@ static void installSettings(void){
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.9 • YouTube 21.33.6";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v1.0 • YouTube 21.33.6";}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     if(ip.section==0){
