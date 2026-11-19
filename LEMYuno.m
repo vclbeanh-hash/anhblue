@@ -1213,6 +1213,7 @@ static void installFullGlass(void){
     fullViewHook(@"YTPlayerButton",LEMPlayer,NO);
     fullViewHook(@"YTTransportControlsButtonView",LEMPlayer,NO);
     fullViewHook(@"YTWatchFloatingMiniplayerActionButtonView",LEMPlayer,NO);
+    fullViewHook(@"YTWatchFloatingMiniplayerCircularBackgroundView",LEMPlayer,NO);
     fullActionContainer(@"YTSlimVideoScrollableDetailsActionsView");
     fullViewHook(@"YTSlimVideoDetailsActionView",LEMActions,NO);
     fullSheetView(@"YTOverflowMenuView");
@@ -1233,13 +1234,68 @@ static void studioRefresh(void){
     }
     [currentPivot setNeedsLayout];
 }
+// Live preview uses the same optical sampling function as the bottom tab bar.
+@interface LEMGlass23Preview : UIView
+@property(nonatomic,strong) UIView *art;
+@property(nonatomic,strong) CAGradientLayer *gradient;
+@property(nonatomic,strong) UIView *bar;
+@property(nonatomic,strong) CALayer *sampleLayer;
+@property(nonatomic,strong) UIVisualEffectView *fallback;
+@property(nonatomic,strong) UIView *pill;
+@property(nonatomic,strong) NSArray<UIImageView *> *icons;
+@property(nonatomic,strong) UILabel *caption;
+- (void)refreshPreview;
+@end
+@implementation LEMGlass23Preview
+- (instancetype)initWithFrame:(CGRect)f{
+    if((self=[super initWithFrame:f])){
+        self.clipsToBounds=YES;self.backgroundColor=UIColor.clearColor;
+        self.art=[UIView new];self.art.clipsToBounds=YES;self.art.layer.cornerRadius=18;[self addSubview:self.art];
+        self.gradient=[CAGradientLayer layer];self.gradient.startPoint=CGPointMake(0,0);self.gradient.endPoint=CGPointMake(1,1);
+        self.gradient.colors=@[(id)[UIColor colorWithRed:.10 green:.16 blue:.36 alpha:1].CGColor,(id)[UIColor colorWithRed:.34 green:.40 blue:.74 alpha:1].CGColor,(id)[UIColor colorWithRed:.82 green:.32 blue:.46 alpha:1].CGColor];[self.art.layer addSublayer:self.gradient];
+        self.caption=[UILabel new];self.caption.text=@"XEM TRƯỚC • GLASS STUDIO";self.caption.font=[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];self.caption.textColor=[UIColor colorWithWhite:1 alpha:.85];[self.art addSubview:self.caption];
+        self.bar=[UIView new];self.bar.clipsToBounds=YES;self.bar.layer.cornerCurve=kCACornerCurveContinuous;[self addSubview:self.bar];
+        self.fallback=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];self.fallback.userInteractionEnabled=NO;[self.bar addSubview:self.fallback];
+        self.sampleLayer=[CALayer layer];self.sampleLayer.contentsGravity=kCAGravityResize;[self.bar.layer addSublayer:self.sampleLayer];
+        self.pill=[UIView new];self.pill.userInteractionEnabled=NO;[self.bar addSubview:self.pill];
+        NSMutableArray *icons=[NSMutableArray array];for(NSString *name in @[@"house.fill",@"play.rectangle",@"rectangle.stack",@"person.crop.circle"]){UIImageView *iv=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:name]];iv.contentMode=UIViewContentModeScaleAspectFit;iv.tintColor=UIColor.whiteColor;[self.bar addSubview:iv];[icons addObject:iv];}self.icons=icons;
+        UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(previewTap:)];[self.bar addGestureRecognizer:tap];
+    }return self;
+}
+- (void)layoutSubviews{
+    [super layoutSubviews];self.art.frame=CGRectInset(self.bounds,16,6);self.gradient.frame=self.art.bounds;self.caption.frame=CGRectMake(13,10,self.art.bounds.size.width-26,20);
+    self.bar.frame=CGRectMake(CGRectGetMinX(self.art.frame)+9,CGRectGetMaxY(self.art.frame)-57,self.art.bounds.size.width-18,46);self.bar.layer.cornerRadius=23;
+    self.fallback.frame=self.bar.bounds;self.sampleLayer.frame=self.bar.bounds;
+    CGFloat slot=(self.bar.bounds.size.width-8)/4;
+    self.pill.frame=CGRectMake(4,4,slot,38);self.pill.layer.cornerRadius=19;
+    [self.icons enumerateObjectsUsingBlock:^(UIImageView *v,NSUInteger i,BOOL *stop){v.frame=CGRectMake(4+slot*(i+.5)-11,12,22,22);}];
+    [self refreshPreview];
+}
+- (void)refreshPreview{
+    if(CGRectIsEmpty(self.bar.bounds))return;
+    CGImageRef image=NULL;
+    if(!economy()&&!UIAccessibilityIsReduceTransparencyEnabled())image=opticalImage(self.art,[self.art convertRect:self.bar.frame fromView:self],YES,NO);
+    [CATransaction begin];[CATransaction setDisableActions:YES];self.sampleLayer.contents=image?(__bridge id)image:nil;self.fallback.hidden=image!=NULL;self.fallback.alpha=MIN(.95,.30+studioTint*.6+studioBlur*.025);[CATransaction commit];
+    if(image)CGImageRelease(image);fluidVisual(self.pill,NO);
+}
+- (void)previewTap:(UITapGestureRecognizer *)g{
+    CGFloat slot=(self.bar.bounds.size.width-8)/4;
+    if(slot<=0)return;
+    NSInteger idx=MAX(0,MIN(3,(NSInteger)floor(([g locationInView:self.bar].x-4)/slot)));
+    CGRect frame=CGRectMake(4+idx*slot,4,slot,38);
+    if(economy()||UIAccessibilityIsReduceMotionEnabled()){self.pill.frame=frame;fluidVisual(self.pill,NO);return;}
+    [UIView animateWithDuration:.32 delay:0 usingSpringWithDamping:1.-studioElastic*.35 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState animations:^{self.pill.frame=frame;fluidVisual(self.pill,NO);} completion:nil];
+}
+@end
 @interface LEMGlass23Settings : UITableViewController
+@property(nonatomic,strong) LEMGlass23Preview *preview;
 @end
 @implementation LEMGlass23Settings
 - (void)viewDidLoad{
     [super viewDidLoad];self.title=@"LEM Glass Studio";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeStudio)];
     self.tableView.rowHeight=62;
+    self.preview=[[LEMGlass23Preview alloc] initWithFrame:CGRectMake(0,0,self.tableView.bounds.size.width,136)];self.tableView.tableHeaderView=self.preview;
 }
 - (void)closeStudio{[self dismissViewControllerAnimated:YES completion:nil];}
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t{return 5;}
@@ -1280,7 +1336,7 @@ static void studioRefresh(void){
     NSUserDefaults *d=NSUserDefaults.standardUserDefaults;NSString *key=@[@"LEM.Studio.tint",@"LEM.Studio.blur",@"LEM.Studio.elastic",@"LEM.Studio.refraction"][row];
     [d setDouble:row==1?round(slider.value):slider.value/100. forKey:key];
     if(studioPreset!=3)[d setInteger:0 forKey:@"LEM.Studio.preset"];
-    loadStudio();[currentPivot setNeedsLayout];
+    loadStudio();[currentPivot setNeedsLayout];[self.preview refreshPreview];
     UITableViewCell *c=[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:1]];
     c.detailTextLabel.text=[NSString stringWithFormat:@"%.0f%@",slider.value,row==1?@"":@"%"];
     for(NSInteger i=0;i<3;i++)[self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:0]].accessoryType=studioPreset==i+1?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone;
@@ -1289,7 +1345,7 @@ static void studioRefresh(void){
     if(sw.tag>=100&&sw.tag<107){[NSUserDefaults.standardUserDefaults setBool:sw.on forKey:[@"LEM.Studio." stringByAppendingString:moduleKeys()[sw.tag-100]]];studioRefresh();return;}
     if(sw.tag<0||sw.tag>4)return;
     NSString *key=@[@"LEM.Studio.haptic",@"LEM.Studio.power",@"LEM.Studio.morph",@"LEM.Studio.ambient",@"LEM.Studio.search"][sw.tag];
-    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:key];studioRefresh();
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:key];studioRefresh();[self.preview refreshPreview];
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip{
     [t deselectRowAtIndexPath:ip animated:YES];NSUserDefaults *d=NSUserDefaults.standardUserDefaults;
@@ -1303,7 +1359,7 @@ static void studioRefresh(void){
         for(NSString *k in moduleKeys())[d removeObjectForKey:[@"LEM.Studio." stringByAppendingString:k]];
         for(NSString *k in @[@"tint",@"blur",@"elastic",@"refraction",@"haptic",@"power",@"morph",@"ambient",@"search",@"preset"])[d removeObjectForKey:[@"LEM.Studio." stringByAppendingString:k]];
     }else return;
-    studioRefresh();[t reloadData];
+    studioRefresh();[self.preview refreshPreview];[t reloadData];
 }
 @end
 static void openStudio(UIViewController *vc,SEL sel,id sender){
