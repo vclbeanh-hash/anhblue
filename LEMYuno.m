@@ -1,4 +1,4 @@
-/* LEM Yuno v0.7 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v0.8 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
    Design reference: https://github.com/danielkanan/Yuno/tree/v1.1.1 */
 #import <UIKit/UIKit.h>
@@ -236,8 +236,8 @@ static void tick(id t,SEL s,id v,id tm){
     if(NSThread.isMainThread)process();else dispatch_async(dispatch_get_main_queue(),process);
 }
 static BOOL mini(id t,SEL s){return enabled(Kmini)?NO:((BOOL(*)(id,SEL))origMini)(t,s);}
-// v0.7 — floating glass shell, no changes to native tab frames or hit testing.
-static char shellKey,oldHiddenKey,oldMaskKey,oldContentColorKey;
+// v0.8 — floating glass shell, no changes to native tab frames or hit testing.
+static char shellKey,oldHiddenKey,oldMaskKey,oldContentColorKey,indicatorKey;
 static __weak UIView *lastPivotView;
 static void restoreHidden(UIView *v){
     if(!v)return;
@@ -271,11 +271,11 @@ static void clearBackground(UIView *v,const void *key){
         self.backgroundColor=UIColor.clearColor;
         self.rim=[CAGradientLayer layer];
         self.rim.startPoint=CGPointMake(.15,0);self.rim.endPoint=CGPointMake(.85,1);
-        self.rim.colors=@[(id)[UIColor colorWithWhite:1 alpha:.76].CGColor,(id)[UIColor colorWithWhite:1 alpha:.15].CGColor,(id)[UIColor colorWithWhite:1 alpha:.48].CGColor];
+        self.rim.colors=@[(id)[UIColor colorWithWhite:1 alpha:.42].CGColor,(id)[UIColor colorWithWhite:1 alpha:.08].CGColor,(id)[UIColor colorWithWhite:1 alpha:.24].CGColor];
         self.rim.locations=@[@0,@.48,@1];
-        self.rimMask=[CAShapeLayer layer];self.rimMask.fillColor=nil;self.rimMask.strokeColor=UIColor.whiteColor.CGColor;self.rimMask.lineWidth=1.2;
+        self.rimMask=[CAShapeLayer layer];self.rimMask.fillColor=nil;self.rimMask.strokeColor=UIColor.whiteColor.CGColor;self.rimMask.lineWidth=.6;
         self.rim.mask=self.rimMask;[self.layer addSublayer:self.rim];
-        self.shine=[CAGradientLayer layer];self.shine.colors=@[(id)[UIColor colorWithWhite:1 alpha:.16].CGColor,(id)[UIColor colorWithWhite:1 alpha:0].CGColor,(id)[UIColor colorWithWhite:1 alpha:.055].CGColor];
+        self.shine=[CAGradientLayer layer];self.shine.colors=@[(id)[UIColor colorWithWhite:1 alpha:.055].CGColor,(id)[UIColor colorWithWhite:1 alpha:0].CGColor,(id)[UIColor colorWithWhite:1 alpha:.015].CGColor];
         self.shine.locations=@[@0,@.5,@1];[self.layer insertSublayer:self.shine below:self.rim];
         self.layer.masksToBounds=YES;
     }return self;
@@ -305,14 +305,21 @@ static void pivot(UIView *t,SEL s){
     BOOL independentBlur=blur&&(!content||![content isDescendantOfView:blur])&&blur!=content;
     // Skip hiding a background if it contains any interactive tab items.
     id items=getObj(t,@"itemViews");
-    CGRect itemRect=CGRectNull;
+    CGRect itemRect=CGRectNull,selectedRect=CGRectNull;
     if([items isKindOfClass:NSArray.class])for(id item in items){
         if(![item isKindOfClass:UIView.class]||[item isHidden])continue;
         UIView *iv=item;
         if(blur&&[iv isDescendantOfView:blur])independentBlur=NO;
         if(iv==separator||[iv isDescendantOfView:separator])separator=nil;
         CGRect f=[iv convertRect:iv.bounds toView:t];
-        if(f.size.width>0&&f.size.height>0)itemRect=CGRectUnion(itemRect,f);
+        if(f.size.width>0&&f.size.height>0){
+            itemRect=CGRectUnion(itemRect,f);
+            SEL sel=NSSelectorFromString(@"selected");
+            BOOL selected=(iv.accessibilityTraits&UIAccessibilityTraitSelected)!=0;
+            Method m=class_getInstanceMethod([iv class],sel);char ret[8]={0};
+            if(m&&method_getNumberOfArguments(m)==2){method_getReturnType(m,ret,sizeof ret);if(ret[0]=='B'||ret[0]=='c')selected=((BOOL(*)(id,SEL))objc_msgSend)(iv,sel);}
+            if(selected)selectedRect=f;
+        }
     }
     if(!enabled(Kglass)){
         [glass removeFromSuperview];[shell removeFromSuperview];
@@ -338,17 +345,32 @@ static void pivot(UIView *t,SEL s){
     if(!glass){
         glass=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
         glass.userInteractionEnabled=NO;glass.clipsToBounds=YES;glass.layer.cornerCurve=kCACornerCurveContinuous;
-        glass.contentView.backgroundColor=[UIColor colorWithWhite:1 alpha:.045];
+        glass.contentView.backgroundColor=[UIColor colorWithWhite:1 alpha:.012];
         objc_setAssociatedObject(t,&glassKey,glass,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if(glass.superview!=t)[t insertSubview:glass atIndex:0];else [t sendSubviewToBack:glass];
-    glass.layer.cornerRadius=MIN(27,h*.5);if(!CGRectEqualToRect(glass.frame,f))glass.frame=f;
+    glass.layer.cornerRadius=h*.5;if(!CGRectEqualToRect(glass.frame,f))glass.frame=f;
+    UIView *indicator=objc_getAssociatedObject(glass,&indicatorKey);
+    if(!indicator){indicator=[UIView new];indicator.userInteractionEnabled=NO;indicator.alpha=0;indicator.layer.cornerCurve=kCACornerCurveContinuous;[glass.contentView addSubview:indicator];objc_setAssociatedObject(glass,&indicatorKey,indicator,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(!CGRectIsNull(selectedRect)){
+       CGRect target=CGRectIntersection(CGRectInset(f,4,4),CGRectInset(selectedRect,3,0)); 
+       if(!CGRectIsNull(target)&&target.size.width>12&&target.size.height>20){
+          target.origin.x-=f.origin.x;target.origin.y-=f.origin.y;
+          BOOL dark=t.traitCollection.userInterfaceStyle!=UIUserInterfaceStyleLight;
+          indicator.backgroundColor=[UIColor colorWithWhite:1 alpha:dark?.14:.5];
+          indicator.layer.cornerRadius=target.size.height*.5;
+          if(indicator.alpha==0||UIAccessibilityIsReduceMotionEnabled()){indicator.frame=target;indicator.alpha=1;}
+          else if(!CGRectEqualToRect(indicator.frame,target)){
+              [UIView animateWithDuration:.32 delay:0 usingSpringWithDamping:.78 initialSpringVelocity:.1 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{indicator.frame=target;} completion:nil];
+          }
+       }
+    }else indicator.alpha=0;
     if(!shell){shell=[[LEMYunoGlassShell alloc] initWithFrame:f];objc_setAssociatedObject(t,&shellKey,shell,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(shell.superview!=t)[t addSubview:shell];else [t bringSubviewToFront:shell];
     if(!CGRectEqualToRect(shell.frame,f))shell.frame=f;
 }
 
-// v0.7 — Yuno 1.1.1 inspired glass surfaces + separately guarded ad filters.
+// v0.8 — Yuno 1.1.1 inspired glass surfaces + separately guarded ad filters.
 // Native iOS controls remain in place; only decorative views are added.
 static char surfaceKey,surfaceRimKey,surfaceBackgroundKey;
 static NSHashTable<UIView *> *glassSurfaces;
@@ -385,7 +407,7 @@ static void decorateSurface(UIView *v,CGFloat radius,BOOL rimOnly){
         if(!CGRectEqualToRect(blur.frame,f))blur.frame=f;
         blur.layer.cornerRadius=rad;
     }
-    if(!rim){rim=[[LEMYunoGlassShell alloc] initWithFrame:f];rim.alpha=rimOnly?.76:.55;objc_setAssociatedObject(v,&surfaceRimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(!rim){rim=[[LEMYunoGlassShell alloc] initWithFrame:f];rim.alpha=rimOnly?.38:.52;objc_setAssociatedObject(v,&surfaceRimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(rim.superview!=v)[v addSubview:rim];else if(v.subviews.lastObject!=rim)[v bringSubviewToFront:rim];
     if(!CGRectEqualToRect(rim.frame,f))rim.frame=f;
     rim.layer.cornerRadius=rad;rim.layer.cornerCurve=kCACornerCurveContinuous;
@@ -411,19 +433,50 @@ static void installSurface(NSString *name,CGFloat radius,BOOL rimOnly,NSArray<NS
     });
     class_replaceMethod(c,sel,impl,method_getTypeEncoding(m));glassHookCount++;
 }
+static void nativeFrostFlag(NSString *name){
+    Class c=NSClassFromString(@"YTColdConfig");
+    SEL sel=NSSelectorFromString(name);
+    Method m=c?class_getInstanceMethod(c,sel):NULL;
+    if(!m||method_getNumberOfArguments(m)!=2)return;
+    char ret[8]={0};method_getReturnType(m,ret,sizeof ret);if(ret[0]!='B'&&ret[0]!='c')return;
+    IMP old=method_getImplementation(m);
+    IMP impl=imp_implementationWithBlock(^BOOL(id t){return enabled(Kglass)?YES:((BOOL(*)(id,SEL))old)(t,sel);});
+    class_replaceMethod(c,sel,impl,method_getTypeEncoding(m));glassHookCount++;
+}
 static void installGlassSurfaces(void){
     glassSurfaces=[NSHashTable weakObjectsHashTable];
-    installSurface(@"YTNavigationBar",18,NO,@[]);
-    installSurface(@"YTFilterChipBarView",18,NO,@[]);
-    installSurface(@"YTChipCloudChipView",14,YES,@[]);
+    // Use the app's own frosted controls instead of painting glass on invisible/empty buttons.
+    // Never force iOS 26 Liquid Glass availability on iOS 16.
+    for(NSString *flag in @[@"enableFrostedGlassForImpPlayerControls",@"enableFrostedGlassMiniplayerControls",@"enableFrostedGlassPaddleGroup"])nativeFrostFlag(flag);
     installSurface(@"YTSearchBoxView",20,NO,@[]);
     installSurface(@"YTWatchFloatingMiniplayerWithPersistentControlsView",15,YES,@[]);
-    installSurface(@"YTWatchFloatingMiniplayerCircularBackgroundView",24,NO,@[]);
-    installSurface(@"YTWatchFloatingMiniplayerActionButtonView",0,YES,@[@"playPauseButton",@"replayNextButton"]);
     installSurface(@"YTReelBottomActionBarView",18,NO,@[]);
-    installSurface(@"YTReelTopBarView",18,NO,@[]);
-    installSurface(@"YTInlinePlayerBarContainerView",0,YES,@[@"enterExitFullscreenButton",@"enterFullscreenButton",@"exitFullscreenButton",@"currentTimeTitleView"]);
-    installSurface(@"YTMainAppVideoPlayerOverlayView",0,YES,@[@"playbackRouteButton",@"overflowButton"]);
+    // Chips retain original selected states and background, to avoid the doubled outline.
+    Class chip=NSClassFromString(@"YTChipCloudChipView");SEL sel=@selector(layoutSubviews);
+    Method m=chip?class_getInstanceMethod(chip,sel):NULL;
+    if(m&&directMethod(chip,sel)&&method_getNumberOfArguments(m)==2){
+        IMP old=method_getImplementation(m);
+        IMP impl=imp_implementationWithBlock(^(UIView *v){
+            ((void(*)(id,SEL))old)(v,sel);
+            if(!v.window)return;
+            BOOL selected=(v.accessibilityTraits&UIAccessibilityTraitSelected)!=0;
+            if(!selected&&enabled(Kglass))decorateSurface(v,10,YES);
+            else if(objc_getAssociatedObject(v,&surfaceRimKey)){
+                [objc_getAssociatedObject(v,&surfaceRimKey) removeFromSuperview];objc_setAssociatedObject(v,&surfaceRimKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+        });
+        class_replaceMethod(chip,sel,impl,method_getTypeEncoding(m));glassHookCount++;
+    }
+    Class p=NSClassFromString(@"YTPivotBarView");SEL change=NSSelectorFromString(@"selectItemWithPivotIdentifier:");
+    Method pm=p?class_getInstanceMethod(p,change):NULL;
+    if(pm&&method_getNumberOfArguments(pm)==3){
+       char ret[8]={0},arg[8]={0};method_getReturnType(pm,ret,sizeof ret);method_getArgumentType(pm,2,arg,sizeof arg);
+       if(ret[0]=='v'&&arg[0]=='@'){
+          IMP old=method_getImplementation(pm);
+          IMP impl=imp_implementationWithBlock(^(UIView *v,id identifier){((void(*)(id,SEL,id))old)(v,change,identifier);[v setNeedsLayout];});
+          class_replaceMethod(p,change,impl,method_getTypeEncoding(pm));
+       }
+    }
 }
 static void refreshGlass(void){
     [lastPivotView setNeedsLayout];
@@ -442,13 +495,11 @@ static BOOL exactBool(id obj,NSString *name){
 }
 static BOOL isAdElement(id e){
     if(!e)return NO;
-    if(exactBool(e,@"hasShoppingCompanionAdRenderer")||getObj(e,@"companionAd"))return YES;
+    if(exactBool(e,@"hasShoppingCompanionAdRenderer")||exactBool(e,@"hasCompanionAdRenderer"))return YES;
     id compat=getObj(e,@"compatibilityOptions");
-    if(exactBool(compat,@"hasAdLoggingData")||exactBool(compat,@"hasAdLayoutLoggingData"))return YES;
-    static NSSet *markers;static dispatch_once_t once;
-    dispatch_once(&once,^{markers=[NSSet setWithArray:@[@"brand_promo",@"product_carousel",@"product_engagement_panel",@"text_search_ad",@"text_image_button_layout",@"feed_ad_metadata",@"ad_slot",@"in_feed_ad",@"promoted_video",@"display_ad"]];});
-    id d=[e description];
-    return [d isKindOfClass:NSString.class]&&[markers containsObject:d];
+    // Ad-layout metadata is more specific than generic logging. Never erase elementData.
+    if(exactBool(compat,@"hasAdLayoutLoggingData"))return YES;
+    return NO;
 }
 static BOOL isAdRenderer(id row){
     if(!row)return NO;
@@ -466,39 +517,57 @@ static BOOL isAdRenderer(id row){
       @"hasCompanionAdRenderer",@"hasShoppingCompanionAdRenderer"
     ];});
     for(NSString *k in keys)if(exactBool(row,k))return YES;
-    return isAdElement(getObj(row,@"elementRenderer"));
+    Class ec=NSClassFromString(@"YTIElementRenderer");
+    if(ec&&[row isKindOfClass:ec])return isAdElement(row);
+    id e=getObj(row,@"elementRenderer");return e&&isAdElement(e);
+}
+static NSUInteger removedAds;
+static NSArray *prunedArray(id arr,NSUInteger depth);
+static BOOL pruneRow(id row,NSUInteger depth){
+    if(!row||depth>5)return NO;
+    if(isAdRenderer(row))return YES;
+    // Renderer wrappers vary by feed. Filter only explicit content arrays, not arbitrary fields.
+    id container=getObj(row,@"itemSectionRenderer");
+    if(!container)container=row;
+    for(NSString *key in @[@"contentsArray",@"itemsArray"]){
+        id arr=getObj(container,key);
+        if(![arr isKindOfClass:NSArray.class]||![arr count]||[arr count]>1000)continue;
+        NSArray *clean=prunedArray(arr,depth+1);
+        if(clean==arr)continue;
+        if(clean.count==0)return YES;
+        if([arr isKindOfClass:NSMutableArray.class])[(NSMutableArray *)arr setArray:clean];
+    }
+    return NO;
+}
+static NSArray *prunedArray(id arr,NSUInteger depth){
+    if(!enabled(Kad)||![arr isKindOfClass:NSArray.class]||depth>5||[arr count]>1000)return arr;
+    NSMutableArray *clean=nil;
+    NSUInteger ix=0;
+    for(id row in arr){
+        if(pruneRow(row,depth)){
+            if(!clean)clean=[NSMutableArray arrayWithArray:[arr subarrayWithRange:NSMakeRange(0,ix)]];
+            removedAds++;
+        }else if(clean)[clean addObject:row];
+        ix++;
+    }
+    return clean?:arr;
+}
+static NSArray *safePrune(id array){
+    @try{return prunedArray(array,0);}@catch(NSException *e){NSLog(@"[LEMYuno] filter: %@",e.reason);return array;}
 }
 static void filterSectionModel(id model){
     if(!enabled(Kad)||!model)return;
     @try{
-        id rows=getObj(model,@"contentsArray");
-        if(![rows isKindOfClass:NSMutableArray.class])return;
-        NSMutableIndexSet *drop=[NSMutableIndexSet indexSet];
-        for(NSUInteger i=0;i<[rows count];i++){
-            id row=rows[i];
-            if(isAdRenderer(row)){[drop addIndex:i];continue;}
-            id sect=getObj(row,@"itemSectionRenderer");
-            id items=getObj(sect,@"contentsArray");
-            if(![items isKindOfClass:NSMutableArray.class]||![items count])continue;
-            NSIndexSet *ads=[items indexesOfObjectsPassingTest:^BOOL(id item,NSUInteger idx,BOOL *stop){return isAdRenderer(item);}];
-            if(ads.count==[items count])[drop addIndex:i];else if(ads.count)[items removeObjectsAtIndexes:ads];
+        id arr=getObj(model,@"contentsArray");
+        if([arr isKindOfClass:NSMutableArray.class]){
+            NSArray *clean=safePrune(arr);if(clean!=arr)[arr setArray:clean];
         }
-        if(drop.count)[rows removeObjectsAtIndexes:drop];
-    }@catch(NSException *e){NSLog(@"[LEMYuno] filter: %@",e.reason);}
+    }@catch(NSException *e){NSLog(@"[LEMYuno] model: %@",e.reason);}
 }
-static IMP origFeedLoad,origFeedSetup,origElement,origCue;
+static IMP origFeedLoad,origFeedSetup,origCue,origSectionBuild;
 static void feedLoad(id t,SEL s,id model){filterSectionModel(model);((void(*)(id,SEL,id))origFeedLoad)(t,s,model);}
 static void feedSetup(id t,SEL s,id model,BOOL more,BOOL refreshing,BOOL preserve){filterSectionModel(model);((void(*)(id,SEL,id,BOOL,BOOL,BOOL))origFeedSetup)(t,s,model,more,refreshing,preserve);}
-static id elementData(id t,SEL s){
-    // Avoid recursively describing a protobuf in its data accessor.
-    if(enabled(Kad)){
-        @try{
-            id opts=getObj(t,@"compatibilityOptions");
-            if(exactBool(opts,@"hasAdLoggingData")||exactBool(opts,@"hasAdLayoutLoggingData")||exactBool(t,@"hasShoppingCompanionAdRenderer"))return [NSData data];
-        }@catch(NSException *e){}
-    }
-    return ((id(*)(id,SEL))origElement)(t,s);
-}
+static id sectionBuild(id t,SEL s,id rows,id reloading){return ((id(*)(id,SEL,id,id))origSectionBuild)(t,s,safePrune(rows),reloading);}
 static BOOL cueAds(id t,SEL s){return enabled(Kad)?NO:((BOOL(*)(id,SEL))origCue)(t,s);}
 static IMP installTyped(Class c,NSString *name,IMP replacement,const char *types,unsigned int n){
     if(!c)return NULL;SEL sel=NSSelectorFromString(name);
@@ -510,14 +579,39 @@ static IMP installTyped(Class c,NSString *name,IMP replacement,const char *types
     IMP old=method_getImplementation(m);if(!old)return NULL;
     class_replaceMethod(c,sel,replacement,method_getTypeEncoding(m));adHookCount++;return old;
 }
+static void installRowPath(Class c,NSString *name){
+    SEL sel=NSSelectorFromString(name);
+    Method m=c?class_getInstanceMethod(c,sel):NULL;
+    if(!m||!directMethod(c,sel)||method_getNumberOfArguments(m)!=3)return;
+    char rt[8]={0},arg[8]={0};method_getReturnType(m,rt,sizeof rt);method_getArgumentType(m,2,arg,sizeof arg);
+    if(rt[0]!='v'||arg[0]!='@')return;
+    IMP old=method_getImplementation(m);
+    IMP impl=imp_implementationWithBlock(^(id t,id rows){((void(*)(id,SEL,id))old)(t,sel,safePrune(rows));});
+    class_replaceMethod(c,sel,impl,method_getTypeEncoding(m));adHookCount++;
+}
 static void installAdFilters(void){
     Class feed=NSClassFromString(@"YTSectionListViewController");
     origFeedLoad=installTyped(feed,@"loadWithModel:",(IMP)feedLoad,"v@",3);
     origFeedSetup=installTyped(feed,@"setupSectionListWithModel:isLoadingMore:isRefreshingFromContinuation:shouldPreserveHeaderOnRefresh:",(IMP)feedSetup,"v@BBB",6);
-    origElement=installTyped(NSClassFromString(@"YTIElementRenderer"),@"elementData",(IMP)elementData,"@",2);
+    Class base=NSClassFromString(@"YTInnerTubeCollectionViewController");
+    origSectionBuild=installTyped(base,@"sectionControllersForSectionRenderers:reloadingSectionControllerByRenderer:",(IMP)sectionBuild,"@@@",4);
+    installRowPath(base,@"addSectionsFromArray:");
+    Class watch=NSClassFromString(@"YTWatchNextResultsViewController");
+    installRowPath(watch,@"addSectionsFromArray:");
+    // Companion advertisements are separate from ordinary watch-next recommendations.
+    SEL c1=NSSelectorFromString(@"setCompanionAd:");
+    Method cm=watch?class_getInstanceMethod(watch,c1):NULL;
+    if(cm&&method_getNumberOfArguments(cm)==3){char rt[8]={0},arg[8]={0};method_getReturnType(cm,rt,sizeof rt);method_getArgumentType(cm,2,arg,sizeof arg);
+       if(rt[0]=='v'&&arg[0]=='@'){IMP old=method_getImplementation(cm);IMP impl=imp_implementationWithBlock(^(id t,id ad){if(!enabled(Kad)||!ad)((void(*)(id,SEL,id))old)(t,c1,ad);});class_replaceMethod(watch,c1,impl,method_getTypeEncoding(cm));adHookCount++;}
+    }
+    SEL c3=NSSelectorFromString(@"setCompanionAd:layoutID:interactionLoggingAdsClientData:");
+    Method cm3=watch?class_getInstanceMethod(watch,c3):NULL;
+    if(cm3&&method_getNumberOfArguments(cm3)==5){char rt[8]={0},x[8]={0},y[8]={0},z[8]={0};method_getReturnType(cm3,rt,sizeof rt);method_getArgumentType(cm3,2,x,sizeof x);method_getArgumentType(cm3,3,y,sizeof y);method_getArgumentType(cm3,4,z,sizeof z);
+       if(rt[0]=='v'&&x[0]=='@'&&y[0]=='@'&&z[0]=='@'){IMP old=method_getImplementation(cm3);IMP impl=imp_implementationWithBlock(^(id t,id ad,id layout,id logging){if(!enabled(Kad)||!ad)((void(*)(id,SEL,id,id,id))old)(t,c3,ad,layout,logging);});class_replaceMethod(watch,c3,impl,method_getTypeEncoding(cm3));adHookCount++;}
+    }
     Class response=NSClassFromString(@"YTIPlayerResponse");
     origCue=hook(response,NSSelectorFromString(@"isCuepointAdsEnabled"),(IMP)cueAds,YES);
-    // Empty only explicit ad-only arrays, when their accessor is actually present.
+    // Retain existing ad-only playback hooks, but never modify content renderer bytes.
     for(NSString *name in @[@"adPlacementsArray",@"adSlotsArray",@"playerAdsArray"]){
         SEL sel=NSSelectorFromString(name);
         if(![response instancesRespondToSelector:sel])continue;
@@ -525,11 +619,7 @@ static void installAdFilters(void){
         if(!m||method_getNumberOfArguments(m)!=2)continue;
         method_getReturnType(m,t,sizeof t);if(t[0]!='@')continue;
         IMP old=method_getImplementation(m);
-        IMP impl=imp_implementationWithBlock(^id(id obj){
-            id original=((id(*)(id,SEL))old)(obj,sel);
-            if(enabled(Kad)&&[original isKindOfClass:NSArray.class])return [NSMutableArray array];
-            return original;
-        });
+        IMP impl=imp_implementationWithBlock(^id(id obj){id original=((id(*)(id,SEL))old)(obj,sel);if(enabled(Kad)&&[original isKindOfClass:NSArray.class])return [NSMutableArray array];return original;});
         class_replaceMethod(response,sel,impl,method_getTypeEncoding(m));adHookCount++;
     }
     NSLog(@"[LEMYuno] ad filters %lu",(unsigned long)adHookCount);
@@ -597,8 +687,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.7",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.7",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.8",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.8",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -622,7 +712,7 @@ static void installSettings(void){
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
 
-// v0.7: settings entry independent of YouTube's changing category model.
+// v0.8: settings entry independent of YouTube's changing category model.
 @interface LEMYunoPreferencesController : UITableViewController
 @property(nonatomic,strong) NSArray<NSDictionary *> *options;
 @end
@@ -632,11 +722,11 @@ static void installSettings(void){
     self.title=@"LEM Yuno";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(lemClose)];
     self.options=@[
-      @{@"key":Kad,@"title":@"Chặn quảng cáo",@"note":@"Lọc quảng cáo video, trang chủ và tìm kiếm"},
+      @{@"key":Kad,@"title":@"Chặn quảng cáo",@"note":@"Lọc thẻ trước layout; không xóa dữ liệu video"},
       @{@"key":Kbg,@"title":@"Phát nền",@"note":@"Nghe khi tắt màn hình"},
       @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
       @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
-      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Kính nổi: thanh dưới, bộ lọc, trình phát, Shorts"},
+      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Viền mỏng, tab chọn chuyển động, kính điều khiển gốc"},
       @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Cho phép phát trong mini player khi chế độ chỉ tạm dừng được yêu cầu"}
     ];
     self.tableView.rowHeight=66;
@@ -646,7 +736,7 @@ static void installSettings(void){
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.7 • YouTube 21.33.6";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.8 • YouTube 21.33.6";}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     if(ip.section==0){
