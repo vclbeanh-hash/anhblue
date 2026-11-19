@@ -271,7 +271,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer{
     UIView *host=self.host,*pill=self.pill; if(!host||!pill||pill.alpha<.2||!pill.superview)return NO;
     UIPanGestureRecognizer *pan=(UIPanGestureRecognizer *)gestureRecognizer;
-    CGPoint velocity=[pan velocityInView:host],point=[pan locationInView:pill.superview];
+    CGPoint velocity=[pan velocityInView:host],point=[pan locationInView:pill.superview];CGPoint delta=[pan translationInView:pill.superview];point.x-=delta.x;point.y-=delta.y;
     // Start only over the currently selected tab; other native taps retain priority.
     if(fabs(velocity.x)<fabs(velocity.y)*1.5||fabs(velocity.x)<20)return NO;
     return CGRectContainsPoint(CGRectInset(pill.frame,-12,-12),point);
@@ -283,7 +283,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
     if(!host||!pill||!parent||!surface)return;
     NSArray *items=tabs(host);
     if(gr.state==UIGestureRecognizerStateBegan){
-        self.dragging=YES;self.start=[gr locationInView:parent];self.originalRect=pill.frame;self.originItem=nil;
+        self.dragging=YES;CGPoint start=[gr locationInView:parent],delta=[gr translationInView:parent];self.start=CGPointMake(start.x-delta.x,start.y-delta.y);self.originalRect=pill.frame;self.originItem=nil;
         for(UIView *x in items)if(selected(x)){self.originItem=x;break;}
         [pill.layer removeAllAnimations];pill.transform=CGAffineTransformIdentity;
         return;
@@ -394,7 +394,7 @@ static void updatePivot(UIView *host){
     }
 }
 static void pivotLayout(UIView *v,SEL s){((void(*)(id,SEL))oldPivot)(v,s);@try{updatePivot(v);}@catch(NSException *e){NSLog(@"[LEM Glass] %@",e.reason);}}
-static void styleChrome(UIView *v,SEL s){((void(*)(id,SEL))oldStyle)(v,s);if(v.window)[v setNeedsLayout];}
+static void styleChrome(UIView *v,SEL s){((void(*)(id,SEL))oldStyle)(v,s);if(v.window&&objc_getAssociatedObject(v,&surfaceKey)){clear(v);UIView *content=view(v,@"contentView");if(content&&content!=v)clear(content);}}
 static void selectTab(UIView *v,SEL s,id key){((void(*)(id,SEL,id))oldSelect)(v,s,key);[v setNeedsLayout];}
 static void rightLayout(UIView *v,SEL s){
     ((void(*)(id,SEL))oldRight)(v,s);
