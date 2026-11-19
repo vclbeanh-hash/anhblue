@@ -1,4 +1,4 @@
-/* LEM Yuno Glass Only 1.8 — independent UIKit implementation.
+/* LEM Yuno Glass Only 1.9 — independent UIKit implementation.
    Visual reference: https://github.com/danielkanan/Yuno/tree/v1.1.1
    No ad, player, network or account hooks. */
 #import <UIKit/UIKit.h>
@@ -9,9 +9,9 @@
 #import <math.h>
 #import <string.h>
 
-static NSString *const buildName=@"LEM Glass Only 1.8";
-static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,normalFrameKey,compactFrameKey,foldKey,tabGeometryKey,miniCornerKey,labelStateKey,fluidLayerKey;
-static IMP oldPivot,oldRight,oldSelect,oldStyle,oldMiniLayout,oldMiniMove,oldMiniFrame,oldLayerLayout,oldPivotHit;
+static NSString *const buildName=@"LEM Glass Only 1.9";
+static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,normalFrameKey,compactFrameKey,foldKey,tabGeometryKey,miniCornerKey,labelStateKey,fluidLayerKey,motionKey,ambientKey;
+static IMP oldPivot,oldRight,oldSelect,oldStyle,oldMiniLayout,oldMiniMove,oldMiniFrame,oldLayerLayout,oldPivotHit,oldWatchLayout,oldWatchDisappear;
 static __weak UIView *currentPivot,*currentMini;
 static __weak UIViewController *currentMiniController;
 static BOOL resizePending=NO;
@@ -143,7 +143,7 @@ cleanup:
     if(c)CGContextRelease(c);if(out)CGContextRelease(out);free(tmp);free(soft);return result;
 }
 
-@interface LEMGlass18Surface : UIView
+@interface LEMGlass19Surface : UIView
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,strong) CALayer *picture;
 @property(nonatomic,strong) UIVisualEffectView *fallback;
@@ -155,7 +155,7 @@ cleanup:
 @property(nonatomic) BOOL topChrome;
 - (void)refresh;
 @end
-@implementation LEMGlass18Surface
+@implementation LEMGlass19Surface
 - (instancetype)initWithFrame:(CGRect)f {
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -199,18 +199,18 @@ cleanup:
     [self.timer invalidate];self.timer=nil;
     if(!self.window){self.picture.contents=nil;return;}
     __weak typeof(self) weak=self;
-    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass18Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
+    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass19Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
     self.timer.tolerance=.025;[[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
 }
 - (void)dealloc{[self.timer invalidate];}
 @end
 
 // Edge stays above the old opaque account-page backdrop; it cannot consume touches.
-@interface LEMGlass18Rim : UIView
+@interface LEMGlass19Rim : UIView
 @property(nonatomic,strong) CAGradientLayer *light;
 @property(nonatomic,strong) CAShapeLayer *outline;
 @end
-@implementation LEMGlass18Rim
+@implementation LEMGlass19Rim
 - (instancetype)initWithFrame:(CGRect)f{
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -230,14 +230,14 @@ cleanup:
 static UIView *branchIn(UIView *child,UIView *ancestor){
     UIView *p=child;while(p&&p.superview!=ancestor)p=p.superview;return p;
 }
-static LEMGlass18Surface *ensureSurface(UIView *host,CGRect f){
-    LEMGlass18Surface *s=objc_getAssociatedObject(host,&surfaceKey);
-    if(!s){s=[[LEMGlass18Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+static LEMGlass19Surface *ensureSurface(UIView *host,CGRect f){
+    LEMGlass19Surface *s=objc_getAssociatedObject(host,&surfaceKey);
+    if(!s){s=[[LEMGlass19Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(s.superview!=host)[host insertSubview:s atIndex:0];
     if(!CGRectEqualToRect(s.frame,f))s.frame=f;
     return s;
 }
-static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass18Surface *surface){
+static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass19Surface *surface){
     // Find the front-most safe insertion point just beneath the first actual tab branch,
     // rather than behind an opaque view inserted by YouTube on per-page style changes.
     NSUInteger first=NSNotFound;
@@ -248,8 +248,8 @@ static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass18Surface
     }}
 }
 static void ensureRim(UIView *host,CGRect frame){
-    LEMGlass18Rim *rim=objc_getAssociatedObject(host,&rimKey);
-    if(!rim){rim=[[LEMGlass18Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    LEMGlass19Rim *rim=objc_getAssociatedObject(host,&rimKey);
+    if(!rim){rim=[[LEMGlass19Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(rim.superview!=host)[host addSubview:rim];else if(host.subviews.lastObject!=rim)[host bringSubviewToFront:rim];
     if(!CGRectEqualToRect(rim.frame,frame))rim.frame=frame;
 }
@@ -282,7 +282,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
         [UIView animateWithDuration:.40 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;fluidVisual(pill,NO);} completion:nil];
     }
 }
-@interface LEMGlass18Drag : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass19Drag : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,weak) UIView *pill;
 @property(nonatomic,weak) UIView *originItem;
@@ -292,21 +292,39 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 @property(nonatomic) CGRect originalRect;
 @property(nonatomic,weak) UIView *hoverItem;
 @property(nonatomic,strong) UISelectionFeedbackGenerator *feedback;
+- (void)press:(UILongPressGestureRecognizer *)g;
 - (void)pan:(UIPanGestureRecognizer *)gr;
 @end
-@implementation LEMGlass18Drag
+@implementation LEMGlass19Drag
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer{
     UIView *host=self.host,*pill=self.pill; if(!host||!pill||pill.alpha<.2||!pill.superview)return NO;
+    if([gestureRecognizer isKindOfClass:UILongPressGestureRecognizer.class])return !UIAccessibilityIsReduceMotionEnabled();
     UIPanGestureRecognizer *pan=(UIPanGestureRecognizer *)gestureRecognizer;
     CGPoint velocity=[pan velocityInView:host],point=[pan locationInView:pill.superview];CGPoint delta=[pan translationInView:pill.superview];point.x-=delta.x;point.y-=delta.y;
     // Start only over the currently selected tab; other native taps retain priority.
     if(fabs(velocity.x)<fabs(velocity.y)*1.5||fabs(velocity.x)<20)return NO;
     return CGRectContainsPoint(CGRectInset(pill.frame,-12,-12),point);
 }
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gr shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return NO;}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
+    if(![g isKindOfClass:UILongPressGestureRecognizer.class])return YES;
+    UIView *p=self.pill;
+    return p.superview&&p.alpha>.2&&CGRectContainsPoint(CGRectInset(p.frame,-5,-5),[touch locationInView:p.superview]);
+}
+- (void)press:(UILongPressGestureRecognizer *)g{
+    UIView *p=self.pill;if(!p||UIAccessibilityIsReduceMotionEnabled())return;
+    if(g.state==UIGestureRecognizerStateBegan&&!self.dragging){
+        CABasicAnimation *a=[CABasicAnimation animationWithKeyPath:@"transform.scale"];
+        a.fromValue=@1;a.toValue=@1.065;a.duration=.15;a.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];a.fillMode=kCAFillModeForwards;a.removedOnCompletion=NO;
+        [p.layer addAnimation:a forKey:@"lem.press"];fluidVisual(p,YES);
+    }else if(g.state==UIGestureRecognizerStateEnded||g.state==UIGestureRecognizerStateCancelled||g.state==UIGestureRecognizerStateFailed){
+        [p.layer removeAnimationForKey:@"lem.press"];
+        if(!self.dragging){fluidVisual(p,NO);CASpringAnimation *a=[CASpringAnimation animationWithKeyPath:@"transform.scale"];a.fromValue=@1.065;a.toValue=@1;a.mass=.8;a.stiffness=250;a.damping=20;a.duration=MIN(.45,a.settlingDuration);[p.layer addAnimation:a forKey:@"lem.release"];}
+    }
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gr shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return [gr isKindOfClass:UILongPressGestureRecognizer.class]||[other isKindOfClass:UILongPressGestureRecognizer.class];}
 - (void)pan:(UIPanGestureRecognizer *)gr{
     UIView *host=self.host,*pill=self.pill,*parent=pill.superview;
-    LEMGlass18Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
+    LEMGlass19Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
     if(!host||!pill||!parent||!surface)return;
     NSArray *items=tabs(host);
     if(gr.state==UIGestureRecognizerStateBegan){
@@ -361,22 +379,25 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
     }
 }
 @end
-static LEMGlass18Drag *installDrag(UIView *host,UIView *pill){
-    LEMGlass18Drag *d=objc_getAssociatedObject(host,&dragKey);
+static LEMGlass19Drag *installDrag(UIView *host,UIView *pill){
+    LEMGlass19Drag *d=objc_getAssociatedObject(host,&dragKey);
     if(!d){
-        d=[LEMGlass18Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
+        d=[LEMGlass19Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
         d.gesture.maximumNumberOfTouches=1;d.gesture.cancelsTouchesInView=YES;d.gesture.delegate=d;
-        [host addGestureRecognizer:d.gesture];objc_setAssociatedObject(host,&dragKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [host addGestureRecognizer:d.gesture];
+        UILongPressGestureRecognizer *press=[[UILongPressGestureRecognizer alloc] initWithTarget:d action:@selector(press:)];press.minimumPressDuration=0;press.allowableMovement=12;press.cancelsTouchesInView=NO;press.delaysTouchesBegan=NO;press.delaysTouchesEnded=NO;press.delegate=d;[host addGestureRecognizer:press];
+        objc_setAssociatedObject(host,&dragKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     d.pill=pill;return d;
 }
 static void installVertical(UIView *host);
+static void installMotion(UIWindow *w);
 
 static BOOL containsTabs(UIView *v,NSArray *items){
     for(UIView *i in items)if(i==v||[i isDescendantOfView:v])return YES;return NO;
 }
 static BOOL isNativePlate(UIView *v,UIView *host,NSArray *items){
-    if(!v||v==host||[v isKindOfClass:LEMGlass18Surface.class]||[v isKindOfClass:LEMGlass18Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
+    if(!v||v==host||[v isKindOfClass:LEMGlass19Surface.class]||[v isKindOfClass:LEMGlass19Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
     if([v isKindOfClass:UIControl.class]||[v isKindOfClass:UILabel.class]||[v isKindOfClass:UIScrollView.class])return NO;
     CGRect f=[v convertRect:v.bounds toView:host];
     if(f.size.width<host.bounds.size.width*.87||f.size.height<12||f.size.height>190||CGRectIsEmpty(CGRectIntersection(f,host.bounds)))return NO;
@@ -415,7 +436,7 @@ static BOOL busy(UIView *v);
 static BOOL dockGeometry(UIView *mini,UIView *bar,CGRect *tabRect,CGRect *miniRect){
     if(!visible(mini)||!visible(bar)||mini.window!=bar.window||!mini.superview||busy(mini))return NO;
     CGRect b=bar.bounds;
-    LEMGlass18Surface *surface=objc_getAssociatedObject(bar,&surfaceKey);
+    LEMGlass19Surface *surface=objc_getAssociatedObject(bar,&surfaceKey);
     CGFloat h=surface?surface.frame.size.height:MIN(58,b.size.height-bar.safeAreaInsets.bottom);
     CGFloat y=surface?surface.frame.origin.y:b.origin.y;
     if(b.size.width<300||h<40||h>75)return NO;
@@ -520,7 +541,7 @@ static UIView *pivotHit(UIView *bar,SEL s,CGPoint point,UIEvent *event){
 static void updatePivot(UIView *host){
     if(!host.window||host.bounds.size.width<160||host.bounds.size.height<30)return;
     NSArray<UIView *> *items=tabs(host);if(items.count<2)return;
-    currentPivot=host;installVertical(host);
+    currentPivot=host;installVertical(host);installMotion(host.window);
     UIView *content=view(host,@"contentView"),*blur=view(host,@"blurView"),*sep=view(host,@"separatorView");
     NSMutableArray *protected=[items mutableCopy];
     if(content&&content!=host)[protected addObject:content];
@@ -550,14 +571,14 @@ static void updatePivot(UIView *host){
     // Hide only full-width, decorative plain/image/effect views, never buttons or tab ancestors.
     NSArray *holders=content&&content!=host?@[host,content]:@[host];
     for(UIView *parent in holders)for(UIView *v in [parent.subviews copy]){
-        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass18Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
+        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass19Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
         if(v.bounds.size.width<parent.bounds.size.width*.87||v.bounds.size.height<25||v.bounds.size.height>180)continue;
         NSString *name=NSStringFromClass(v.class).lowercaseString;
         BOOL decorative=[v isKindOfClass:UIVisualEffectView.class]||[v isKindOfClass:UIImageView.class]||(!v.userInteractionEnabled&&([name containsString:@"background"]||[name containsString:@"backdrop"]||[name containsString:@"blur"]));
         if(decorative)hideSafe(v,protected);
     }
     removeOldPlate(host,items);
-    LEMGlass18Surface *surface=ensureSurface(host,frame);
+    LEMGlass19Surface *surface=ensureSurface(host,frame);
     placeBehindTabs(host,items,surface);
     surface.edge.hidden=YES;[objc_getAssociatedObject(host,&rimKey) removeFromSuperview];
     UIView *pill=objc_getAssociatedObject(host,&pillKey);
@@ -569,7 +590,7 @@ static void updatePivot(UIView *host){
     if(pill.superview!=parent){
         if(parent==host)[host insertSubview:pill aboveSubview:surface];else [parent insertSubview:pill atIndex:0];
     }
-    LEMGlass18Drag *drag=installDrag(host,pill);
+    LEMGlass19Drag *drag=installDrag(host,pill);
     if(drag.dragging)return;
     if(CGRectIsNull(chosen)){pill.alpha=0;return;}
     CGRect target=CGRectIntersection(CGRectInset(frame,4,4),CGRectInset(chosen,3,0));
@@ -591,7 +612,7 @@ static void rightLayout(UIView *v,SEL s){
     if(!v.window||v.bounds.size.width<35||v.bounds.size.width>260||v.bounds.size.height<25||v.bounds.size.height>90)return;
     @try{
         CGRect f=CGRectInset(v.bounds,2,3);if(f.size.width<28||f.size.height<24)return;
-        clear(v);LEMGlass18Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
+        clear(v);LEMGlass19Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
     }@catch(NSException *e){}
 }
 
@@ -715,12 +736,12 @@ static void requestFold(BOOL compact){
     if([objc_getAssociatedObject(mini,&foldKey) boolValue]==compact)return;
     applyCompact(mini,compact,YES);
 }
-@interface LEMGlass18Vertical : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass19Vertical : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIWindow *window;
 @property(nonatomic) BOOL consumed;
 - (void)pan:(UIPanGestureRecognizer *)g;
 @end
-@implementation LEMGlass18Vertical
+@implementation LEMGlass19Vertical
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
     if(!canCompact(currentMini)||currentMini.window!=self.window)return NO;
     UIView *v=touch.view;
@@ -749,9 +770,105 @@ static void requestFold(BOOL compact){
 static void installVertical(UIView *host){
     UIWindow *w=host.window;
     if(!w||objc_getAssociatedObject(w,&verticalKey))return;
-    LEMGlass18Vertical *d=[LEMGlass18Vertical new];d.window=w;
+    LEMGlass19Vertical *d=[LEMGlass19Vertical new];d.window=w;
     UIPanGestureRecognizer *g=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];g.delegate=d;g.maximumNumberOfTouches=1;g.cancelsTouchesInView=NO;g.delaysTouchesBegan=NO;g.delaysTouchesEnded=NO;
     [w addGestureRecognizer:g];objc_setAssociatedObject(w,&verticalKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+// Motion is decorative only: the original thumbnail tap opens the native player.
+@interface LEMGlass19Motion : NSObject<UIGestureRecognizerDelegate>
+@property(nonatomic,weak) UIWindow *window;
+@property(nonatomic,strong) UIImage *art;
+@property(nonatomic,strong) UIColor *accent;
+@property(nonatomic) CGRect origin;
+@property(nonatomic) CFTimeInterval captured;
+@property(nonatomic,weak) UIViewController *watch;
+@property(nonatomic,weak) UIView *flying;
+- (void)tap:(UITapGestureRecognizer *)g;
+@end
+static UIColor *artAccent(UIImage *image){
+    CGImageRef im=image.CGImage;if(!im)return nil;
+    unsigned char data[16*16*4]={0};CGColorSpaceRef cs=CGColorSpaceCreateDeviceRGB();
+    CGContextRef c=CGBitmapContextCreate(data,16,16,8,16*4,cs,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);CGColorSpaceRelease(cs);
+    if(!c)return nil;CGContextDrawImage(c,CGRectMake(0,0,16,16),im);CGContextRelease(c);
+    double r=0,g=0,b=0,total=0;
+    for(int i=0;i<256;i++){double x=data[i*4]/255.,y=data[i*4+1]/255.,z=data[i*4+2]/255.;double hi=fmax(x,fmax(y,z)),lo=fmin(x,fmin(y,z)),l=(x+y+z)/3;
+        if(data[i*4+3]<210||l<.06||l>.94)continue;double weight=.3+(hi-lo)*2.;r+=x*weight;g+=y*weight;b+=z*weight;total+=weight;}
+    if(total<1)return nil;
+    return [UIColor colorWithRed:MIN(1,r/total*1.2) green:MIN(1,g/total*1.2) blue:MIN(1,b/total*1.2) alpha:1];
+}
+static UIImageView *thumbnailAt(UIView *root,CGPoint point,UIWindow *window,NSUInteger depth){
+    if(!root||root.hidden||root.alpha<.1||depth>8)return nil;
+    CGRect f=[root convertRect:root.bounds toView:window];
+    if(!CGRectContainsPoint(f,point))return nil;
+    if([root isKindOfClass:UIImageView.class]&&f.size.width>=140&&f.size.height>=75&&f.size.width/f.size.height>1.2&&f.size.width/f.size.height<2.7&&((UIImageView *)root).image)return (UIImageView *)root;
+    for(UIView *child in root.subviews.reverseObjectEnumerator){UIImageView *im=thumbnailAt(child,point,window,depth+1);if(im)return im;}
+    return nil;
+}
+@implementation LEMGlass19Motion
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return YES;}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
+    self.art=nil;self.captured=0;
+    if(!visible(currentPivot)||currentPivot.window!=self.window||UIAccessibilityIsReduceMotionEnabled())return NO;
+    UIView *v=touch.view;
+    if([v isDescendantOfView:currentPivot]||[v isDescendantOfView:currentMini])return NO;
+    UIView *cell=nil;
+    for(UIView *p=v;p&&p!=self.window;p=p.superview){
+        if([p isKindOfClass:UICollectionViewCell.class]||[p isKindOfClass:UITableViewCell.class]){cell=p;break;}
+    }
+    if(!cell)return NO;
+    CGPoint pt=[touch locationInView:self.window];UIImageView *im=thumbnailAt(cell,pt,self.window,0);
+    if(!im)return NO;
+    self.art=im.image;self.origin=[im convertRect:im.bounds toView:self.window];return YES;
+}
+- (void)tap:(UITapGestureRecognizer *)g{
+    if(g.state==UIGestureRecognizerStateRecognized&&self.art){self.captured=CACurrentMediaTime();self.accent=artAccent(self.art);}
+}
+@end
+static void installMotion(UIWindow *w){
+    if(!w||objc_getAssociatedObject(w,&motionKey))return;
+    LEMGlass19Motion *d=[LEMGlass19Motion new];d.window=w;
+    UITapGestureRecognizer *g=[[UITapGestureRecognizer alloc] initWithTarget:d action:@selector(tap:)];g.delegate=d;g.cancelsTouchesInView=NO;g.delaysTouchesBegan=NO;g.delaysTouchesEnded=NO;
+    [w addGestureRecognizer:g];objc_setAssociatedObject(w,&motionKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+@interface LEMGlass19Ambient : UIView
+@property(nonatomic,strong) CAGradientLayer *glow;
+@end
+@implementation LEMGlass19Ambient
+- (instancetype)initWithFrame:(CGRect)f{
+    if((self=[super initWithFrame:f])){self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.glow=[CAGradientLayer layer];self.glow.startPoint=CGPointMake(.5,0);self.glow.endPoint=CGPointMake(.5,1);[self.layer addSublayer:self.glow];}return self;
+}
+- (void)layoutSubviews{[super layoutSubviews];self.glow.frame=self.bounds;}
+@end
+static void watchMotion(UIViewController *vc){
+    UIView *v=vc.viewIfLoaded;UIWindow *w=v.window;if(!visible(v)||!w)return;
+    LEMGlass19Motion *d=objc_getAssociatedObject(w,&motionKey);if(!d)return;
+    CGRect target=[v convertRect:v.bounds toView:w];
+    if(target.size.width<w.bounds.size.width*.80||target.size.height<110||target.size.height>320||target.size.width/target.size.height<1.15||CGRectGetMinY(target)>w.bounds.size.height*.48)return;
+    if(d.art&&d.captured>0&&CACurrentMediaTime()-d.captured<1.6&&!d.flying&&!UIAccessibilityIsReduceMotionEnabled()){
+        UIImage *art=d.art;CGRect from=d.origin;d.art=nil;d.captured=0;d.watch=vc;
+        if(!CGRectIsEmpty(from)&&!CGRectIsEmpty(CGRectIntersection(from,w.bounds))){
+            UIImageView *ghost=[[UIImageView alloc] initWithImage:art];ghost.frame=from;ghost.contentMode=UIViewContentModeScaleAspectFill;ghost.clipsToBounds=YES;ghost.userInteractionEnabled=NO;ghost.layer.cornerRadius=9;ghost.accessibilityElementsHidden=YES;[w addSubview:ghost];d.flying=ghost;
+            [UIView animateWithDuration:.30 delay:0 usingSpringWithDamping:.87 initialSpringVelocity:.2 options:UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{ghost.frame=target;ghost.layer.cornerRadius=0;} completion:^(BOOL finished){
+                [UIView animateWithDuration:.13 animations:^{ghost.alpha=0;} completion:^(BOOL done){[ghost removeFromSuperview];}];
+            }];
+        }
+    }
+    // A subtle ambient band outside the player, not a filter over video frames.
+    // Use only the color of the thumbnail that opened this specific watch view.
+    if(d.watch!=vc||!d.accent||!v.superview||UIAccessibilityIsReduceTransparencyEnabled())return;
+    UIView *parent=v.superview;CGRect span=[v convertRect:v.bounds toView:parent];CGFloat room=CGRectGetMaxY(parent.bounds)-CGRectGetMaxY(span);
+    LEMGlass19Ambient *band=objc_getAssociatedObject(vc,&ambientKey);
+    if(room<25){[band removeFromSuperview];return;}
+    CGRect area=CGRectMake(span.origin.x,CGRectGetMaxY(span),span.size.width,MIN(75,room));
+    if(!band){band=[[LEMGlass19Ambient alloc] initWithFrame:area];objc_setAssociatedObject(vc,&ambientKey,band,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    band.frame=area;band.glow.colors=@[(id)[d.accent colorWithAlphaComponent:.33].CGColor,(id)[d.accent colorWithAlphaComponent:.10].CGColor,(id)[d.accent colorWithAlphaComponent:0].CGColor];band.glow.locations=@[@0,@.4,@1];
+    if(band.superview!=parent)[parent addSubview:band];
+}
+static void watchLayout(UIViewController *vc,SEL sel){((void(*)(id,SEL))oldWatchLayout)(vc,sel);@try{watchMotion(vc);}@catch(NSException *e){NSLog(@"[LEM Glass] motion: %@",e.reason);}}
+static void watchDisappear(UIViewController *vc,SEL sel,BOOL animated){
+    ((void(*)(id,SEL,BOOL))oldWatchDisappear)(vc,sel,animated);
+    [objc_getAssociatedObject(vc,&ambientKey) removeFromSuperview];objc_setAssociatedObject(vc,&ambientKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    LEMGlass19Motion *d=objc_getAssociatedObject(vc.viewIfLoaded.window,&motionKey);if(d.watch==vc){d.watch=nil;d.accent=nil;[d.flying removeFromSuperview];}
 }
 static IMP attach(Class c,SEL sel,IMP replacement,const char *types,unsigned n){
     Method m=c?class_getInstanceMethod(c,sel):NULL;
@@ -793,7 +910,12 @@ __attribute__((constructor)) static void start(void){
             }
             Class layer=NSClassFromString(@"YTWatchLayerView");
             if(oldMiniFrame&&layer&&[layer isSubclassOfClass:UIView.class])oldLayerLayout=attach(layer,@selector(layoutSubviews),(IMP)layerLayout,"v",2);
-            NSLog(@"[%@] pivot=%d mini=%d",buildName,oldPivot!=NULL,oldMiniFrame!=NULL);
+            Class watch=NSClassFromString(@"YTMainAppVideoPlayerOverlayViewController");
+            if(watch&&[watch isSubclassOfClass:UIViewController.class]){
+                oldWatchLayout=attach(watch,@selector(viewDidLayoutSubviews),(IMP)watchLayout,"v",2);
+                oldWatchDisappear=attach(watch,@selector(viewDidDisappear:),(IMP)watchDisappear,"vB",3);
+            }
+            NSLog(@"[%@] pivot=%d mini=%d motion=%d",buildName,oldPivot!=NULL,oldMiniFrame!=NULL,oldWatchLayout!=NULL);
         });
     }
 }
