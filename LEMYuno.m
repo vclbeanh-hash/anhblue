@@ -1,4 +1,4 @@
-/* LEM Yuno v0.5 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v0.6 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
    Design reference: https://github.com/danielkanan/Yuno/tree/v1.0.0 */
 #import <UIKit/UIKit.h>
@@ -236,39 +236,116 @@ static void tick(id t,SEL s,id v,id tm){
     if(NSThread.isMainThread)process();else dispatch_async(dispatch_get_main_queue(),process);
 }
 static BOOL mini(id t,SEL s){return enabled(Kmini)?NO:((BOOL(*)(id,SEL))origMini)(t,s);}
+// v0.6 — floating glass shell, no changes to native tab frames or hit testing.
+static char shellKey,oldHiddenKey,oldMaskKey,oldContentColorKey;
+static __weak UIView *lastPivotView;
+static void restoreHidden(UIView *v){
+    if(!v)return;
+    NSNumber *old=objc_getAssociatedObject(v,&oldHiddenKey);
+    if(old){v.hidden=old.boolValue;objc_setAssociatedObject(v,&oldHiddenKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+}
+static void hideDecor(UIView *v){
+    if(!v)return;
+    if(!objc_getAssociatedObject(v,&oldHiddenKey))objc_setAssociatedObject(v,&oldHiddenKey,@(v.hidden),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    v.hidden=YES;
+}
+static void restoreBackground(UIView *v,const void *key){
+    if(!v)return;
+    id old=objc_getAssociatedObject(v,key);
+    if(old){v.backgroundColor=old==NSNull.null?nil:old;objc_setAssociatedObject(v,key,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+}
+static void clearBackground(UIView *v,const void *key){
+    if(!v)return;
+    if(!objc_getAssociatedObject(v,key))objc_setAssociatedObject(v,key,v.backgroundColor?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    v.backgroundColor=UIColor.clearColor;
+}
+@interface LEMYunoGlassShell : UIView
+@property(nonatomic,strong) CAGradientLayer *rim;
+@property(nonatomic,strong) CAShapeLayer *rimMask;
+@property(nonatomic,strong) CAGradientLayer *shine;
+@end
+@implementation LEMYunoGlassShell
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])){
+        self.userInteractionEnabled=NO;
+        self.backgroundColor=UIColor.clearColor;
+        self.rim=[CAGradientLayer layer];
+        self.rim.startPoint=CGPointMake(.15,0);self.rim.endPoint=CGPointMake(.85,1);
+        self.rim.colors=@[(id)[UIColor colorWithWhite:1 alpha:.76].CGColor,(id)[UIColor colorWithWhite:1 alpha:.15].CGColor,(id)[UIColor colorWithWhite:1 alpha:.48].CGColor];
+        self.rim.locations=@[@0,@.48,@1];
+        self.rimMask=[CAShapeLayer layer];self.rimMask.fillColor=nil;self.rimMask.strokeColor=UIColor.whiteColor.CGColor;self.rimMask.lineWidth=1.2;
+        self.rim.mask=self.rimMask;[self.layer addSublayer:self.rim];
+        self.shine=[CAGradientLayer layer];self.shine.colors=@[(id)[UIColor colorWithWhite:1 alpha:.16].CGColor,(id)[UIColor colorWithWhite:1 alpha:0].CGColor,(id)[UIColor colorWithWhite:1 alpha:.055].CGColor];
+        self.shine.locations=@[@0,@.5,@1];[self.layer insertSublayer:self.shine below:self.rim];
+        self.layer.masksToBounds=YES;
+    }return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    CGFloat rad=MIN(27,self.bounds.size.height*.5);
+    self.layer.cornerRadius=rad;self.layer.cornerCurve=kCACornerCurveContinuous;
+    self.rim.frame=self.bounds;self.rimMask.frame=self.bounds;
+    self.rimMask.path=[UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds,.8,.8) cornerRadius:rad-.8].CGPath;
+    self.shine.frame=self.bounds;[CATransaction commit];
+}
+@end
 static void pivot(UIView *t,SEL s){
     ((void(*)(id,SEL))origPivot)(t,s);
     if(!t.window||t.bounds.size.width<120||t.bounds.size.height<30)return;
+    lastPivotView=t;
     UIVisualEffectView *glass=objc_getAssociatedObject(t,&glassKey);
-    id blur=getObj(t,@"blurView");
+    LEMYunoGlassShell *shell=objc_getAssociatedObject(t,&shellKey);
+    UIView *blur=getObj(t,@"blurView");
+    UIView *separator=getObj(t,@"separatorView");
+    UIView *content=getObj(t,@"contentView");
+    if(![blur isKindOfClass:UIView.class]||blur==t)blur=nil;
+    if(![separator isKindOfClass:UIView.class]||separator==t)separator=nil;
+    if(![content isKindOfClass:UIView.class]||content==t)content=nil;
+    BOOL independentBlur=blur&&(!content||![content isDescendantOfView:blur])&&blur!=content;
+    // Skip hiding a background if it contains any interactive tab items.
+    id items=getObj(t,@"itemViews");
+    CGRect itemRect=CGRectNull;
+    if([items isKindOfClass:NSArray.class])for(id item in items){
+        if(![item isKindOfClass:UIView.class]||[item isHidden])continue;
+        UIView *iv=item;
+        if(blur&&[iv isDescendantOfView:blur])independentBlur=NO;
+        if(iv==separator||[iv isDescendantOfView:separator])separator=nil;
+        CGRect f=[iv convertRect:iv.bounds toView:t];
+        if(f.size.width>0&&f.size.height>0)itemRect=CGRectUnion(itemRect,f);
+    }
     if(!enabled(Kglass)){
-        if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-        id original=objc_getAssociatedObject(t,&glassBgKey);
-        if(original){t.backgroundColor=original==NSNull.null?nil:original;objc_setAssociatedObject(t,&glassBgKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-        if([blur isKindOfClass:UIVisualEffectView.class]){
-            id effect=objc_getAssociatedObject(blur,&glassEffectKey);
-            if(effect){((UIVisualEffectView *)blur).effect=effect==NSNull.null?nil:effect;objc_setAssociatedObject(blur,&glassEffectKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-        }
+        [glass removeFromSuperview];[shell removeFromSuperview];
+        objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);objc_setAssociatedObject(t,&shellKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        restoreBackground(t,&glassBgKey);restoreBackground(content,&oldContentColorKey);
+        restoreHidden(blur);restoreHidden(separator);
         return;
     }
-    if(!objc_getAssociatedObject(t,&glassBgKey))objc_setAssociatedObject(t,&glassBgKey,t.backgroundColor?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    t.backgroundColor=UIColor.clearColor;
-    if([blur isKindOfClass:UIVisualEffectView.class]){
-        if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-        UIVisualEffectView *native=blur;
-        if(!objc_getAssociatedObject(native,&glassEffectKey)){
-            objc_setAssociatedObject(native,&glassEffectKey,native.effect?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            native.effect=[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
-        }
-        return;
+    CGRect bounds=t.bounds;
+    CGFloat safeBottom=t.safeAreaInsets.bottom;
+    CGFloat usable=MAX(32,bounds.size.height-safeBottom);
+    CGFloat h=MIN(62,usable);CGFloat y=bounds.origin.y+MAX(0,(usable-h)*.5);
+    if(!CGRectIsNull(itemRect)&&itemRect.size.height>=24&&itemRect.size.height<=80){
+        CGFloat start=MAX(bounds.origin.y,CGRectGetMinY(itemRect)-5);
+        CGFloat finish=MIN(CGRectGetMaxY(bounds),CGRectGetMaxY(itemRect)+5);
+        if(finish-start>=30){y=start;h=finish-start;}
     }
+    CGRect f=CGRectMake(bounds.origin.x+8,y,bounds.size.width-16,h);
+    clearBackground(t,&glassBgKey);
+    if(content&&content!=blur)clearBackground(content,&oldContentColorKey);
+    if(independentBlur)hideDecor(blur);
+    if(separator)hideDecor(separator);
     if(!glass){
-        glass=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
-        glass.userInteractionEnabled=NO;glass.layer.cornerRadius=20;glass.clipsToBounds=YES;
-        glass.layer.borderWidth=.75;glass.layer.borderColor=[UIColor colorWithWhite:1 alpha:.24].CGColor;
-        [t insertSubview:glass atIndex:0];objc_setAssociatedObject(t,&glassKey,glass,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        glass=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
+        glass.userInteractionEnabled=NO;glass.clipsToBounds=YES;glass.layer.cornerCurve=kCACornerCurveContinuous;
+        glass.contentView.backgroundColor=[UIColor colorWithWhite:1 alpha:.045];
+        objc_setAssociatedObject(t,&glassKey,glass,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    CGRect f=t.bounds;f.origin.x+=5;f.origin.y+=3;f.size.width-=10;f.size.height=MIN(f.size.height-6,72);glass.frame=f;
+    if(glass.superview!=t)[t insertSubview:glass atIndex:0];else [t sendSubviewToBack:glass];
+    glass.layer.cornerRadius=MIN(27,h*.5);if(!CGRectEqualToRect(glass.frame,f))glass.frame=f;
+    if(!shell){shell=[[LEMYunoGlassShell alloc] initWithFrame:f];objc_setAssociatedObject(t,&shellKey,shell,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(shell.superview!=t)[t addSubview:shell];else [t bringSubviewToFront:shell];
+    if(!CGRectEqualToRect(shell.frame,f))shell.frame=f;
 }
 static void installExtra(void){
     Class pc=NSClassFromString(@"YTPlayerViewController");
@@ -288,7 +365,7 @@ static id switches(NSString *title,NSString *description,NSString *key){
     SEL s=NSSelectorFromString(@"switchItemWithTitle:titleDescription:accessibilityIdentifier:switchOn:switchBlock:settingItemId:");
     if(!available(c,s,8))return nil;
     BOOL (^block)(id,BOOL)=^BOOL(id cell,BOOL on){
-        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];if([key isEqual:Ksb]&&!on)resetSponsor();if([key isEqual:Khd])qualityID=nil;return YES;
+        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];if([key isEqual:Ksb]&&!on)resetSponsor();if([key isEqual:Khd])qualityID=nil;if([key isEqual:Kglass])[lastPivotView setNeedsLayout];return YES;
     };
     return ((id(*)(id,SEL,id,id,id,BOOL,id,NSInteger))objc_msgSend)(c,s,title,description,key,enabled(key),block,0);
 }
@@ -333,8 +410,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.5",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.5",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.6",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.6",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -358,7 +435,7 @@ static void installSettings(void){
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
 
-// v0.5: settings entry independent of YouTube's changing category model.
+// v0.6: settings entry independent of YouTube's changing category model.
 @interface LEMYunoPreferencesController : UITableViewController
 @property(nonatomic,strong) NSArray<NSDictionary *> *options;
 @end
@@ -372,7 +449,7 @@ static void installSettings(void){
       @{@"key":Kbg,@"title":@"Phát nền",@"note":@"Nghe khi tắt màn hình"},
       @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
       @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
-      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Thanh điều hướng (thử nghiệm)"},
+      @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Thanh kính nổi, viền phản sáng"},
       @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Cho phép phát trong mini player khi chế độ chỉ tạm dừng được yêu cầu"}
     ];
     self.tableView.rowHeight=66;
@@ -382,7 +459,7 @@ static void installSettings(void){
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.5 • YouTube 21.33.6";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.6 • YouTube 21.33.6";}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     if(ip.section==0){
