@@ -1,4 +1,4 @@
-/* LEM Yuno Glass Studio 2.0 — independent UIKit implementation.
+/* LEM Yuno Glass Studio 2.1 — independent UIKit implementation.
    Visual reference: https://github.com/danielkanan/Yuno/tree/v1.1.1
    No ad, player, network or account hooks. */
 #import <UIKit/UIKit.h>
@@ -9,8 +9,8 @@
 #import <math.h>
 #import <string.h>
 
-static NSString *const buildName=@"LEM Glass Studio 2.0";
-static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,normalFrameKey,compactFrameKey,foldKey,tabGeometryKey,miniCornerKey,labelStateKey,fluidLayerKey,motionKey,ambientKey,studioEntryKey;
+static NSString *const buildName=@"LEM Glass Studio 2.1";
+static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,normalFrameKey,compactFrameKey,foldKey,tabGeometryKey,miniCornerKey,labelStateKey,fluidLayerKey,motionKey,ambientKey,studioEntryKey,searchPlateKey,searchStateKey,searchAnimKey;
 static IMP oldPivot,oldRight,oldSelect,oldStyle,oldMiniLayout,oldMiniMove,oldMiniFrame,oldLayerLayout,oldPivotHit,oldWatchLayout,oldWatchDisappear,oldSearchLayout,oldSettingsLayout,oldSearchSettingsLayout;
 static __weak UIView *currentPivot,*currentMini;
 static __weak UIViewController *currentMiniController;
@@ -160,7 +160,7 @@ cleanup:
     if(c)CGContextRelease(c);if(out)CGContextRelease(out);free(tmp);free(soft);return result;
 }
 
-@interface LEMGlass20Surface : UIView
+@interface LEMGlass21Surface : UIView
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,strong) CALayer *picture;
 @property(nonatomic,strong) UIVisualEffectView *fallback;
@@ -172,7 +172,7 @@ cleanup:
 @property(nonatomic) BOOL topChrome;
 - (void)refresh;
 @end
-@implementation LEMGlass20Surface
+@implementation LEMGlass21Surface
 - (instancetype)initWithFrame:(CGRect)f {
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -220,18 +220,18 @@ cleanup:
     [self.timer invalidate];self.timer=nil;
     if(!self.window){self.picture.contents=nil;return;}
     __weak typeof(self) weak=self;
-    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass20Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
+    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass21Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
     self.timer.tolerance=.025;[[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
 }
 - (void)dealloc{[self.timer invalidate];}
 @end
 
 // Edge stays above the old opaque account-page backdrop; it cannot consume touches.
-@interface LEMGlass20Rim : UIView
+@interface LEMGlass21Rim : UIView
 @property(nonatomic,strong) CAGradientLayer *light;
 @property(nonatomic,strong) CAShapeLayer *outline;
 @end
-@implementation LEMGlass20Rim
+@implementation LEMGlass21Rim
 - (instancetype)initWithFrame:(CGRect)f{
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -251,14 +251,14 @@ cleanup:
 static UIView *branchIn(UIView *child,UIView *ancestor){
     UIView *p=child;while(p&&p.superview!=ancestor)p=p.superview;return p;
 }
-static LEMGlass20Surface *ensureSurface(UIView *host,CGRect f){
-    LEMGlass20Surface *s=objc_getAssociatedObject(host,&surfaceKey);
-    if(!s){s=[[LEMGlass20Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+static LEMGlass21Surface *ensureSurface(UIView *host,CGRect f){
+    LEMGlass21Surface *s=objc_getAssociatedObject(host,&surfaceKey);
+    if(!s){s=[[LEMGlass21Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(s.superview!=host)[host insertSubview:s atIndex:0];
     if(!CGRectEqualToRect(s.frame,f))s.frame=f;
     return s;
 }
-static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass20Surface *surface){
+static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass21Surface *surface){
     // Find the front-most safe insertion point just beneath the first actual tab branch,
     // rather than behind an opaque view inserted by YouTube on per-page style changes.
     NSUInteger first=NSNotFound;
@@ -269,8 +269,8 @@ static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass20Surface
     }}
 }
 static void ensureRim(UIView *host,CGRect frame){
-    LEMGlass20Rim *rim=objc_getAssociatedObject(host,&rimKey);
-    if(!rim){rim=[[LEMGlass20Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    LEMGlass21Rim *rim=objc_getAssociatedObject(host,&rimKey);
+    if(!rim){rim=[[LEMGlass21Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(rim.superview!=host)[host addSubview:rim];else if(host.subviews.lastObject!=rim)[host bringSubviewToFront:rim];
     if(!CGRectEqualToRect(rim.frame,frame))rim.frame=frame;
 }
@@ -303,7 +303,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
         [UIView animateWithDuration:.40 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;fluidVisual(pill,NO);} completion:nil];
     }
 }
-@interface LEMGlass20Drag : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass21Drag : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,weak) UIView *pill;
 @property(nonatomic,weak) UIView *originItem;
@@ -316,7 +316,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 - (void)press:(UILongPressGestureRecognizer *)g;
 - (void)pan:(UIPanGestureRecognizer *)gr;
 @end
-@implementation LEMGlass20Drag
+@implementation LEMGlass21Drag
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer{
     UIView *host=self.host,*pill=self.pill; if(!host||!pill||pill.alpha<.2||!pill.superview)return NO;
     if([gestureRecognizer isKindOfClass:UILongPressGestureRecognizer.class])return !UIAccessibilityIsReduceMotionEnabled();
@@ -345,7 +345,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gr shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return [gr isKindOfClass:UILongPressGestureRecognizer.class]||[other isKindOfClass:UILongPressGestureRecognizer.class];}
 - (void)pan:(UIPanGestureRecognizer *)gr{
     UIView *host=self.host,*pill=self.pill,*parent=pill.superview;
-    LEMGlass20Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
+    LEMGlass21Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
     if(!host||!pill||!parent||!surface)return;
     NSArray *items=tabs(host);
     if(gr.state==UIGestureRecognizerStateBegan){
@@ -400,10 +400,10 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
     }
 }
 @end
-static LEMGlass20Drag *installDrag(UIView *host,UIView *pill){
-    LEMGlass20Drag *d=objc_getAssociatedObject(host,&dragKey);
+static LEMGlass21Drag *installDrag(UIView *host,UIView *pill){
+    LEMGlass21Drag *d=objc_getAssociatedObject(host,&dragKey);
     if(!d){
-        d=[LEMGlass20Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
+        d=[LEMGlass21Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
         d.gesture.maximumNumberOfTouches=1;d.gesture.cancelsTouchesInView=YES;d.gesture.delegate=d;
         [host addGestureRecognizer:d.gesture];
         UILongPressGestureRecognizer *press=[[UILongPressGestureRecognizer alloc] initWithTarget:d action:@selector(press:)];press.minimumPressDuration=0;press.allowableMovement=12;press.cancelsTouchesInView=NO;press.delaysTouchesBegan=NO;press.delaysTouchesEnded=NO;press.delegate=d;[host addGestureRecognizer:press];
@@ -418,7 +418,7 @@ static BOOL containsTabs(UIView *v,NSArray *items){
     for(UIView *i in items)if(i==v||[i isDescendantOfView:v])return YES;return NO;
 }
 static BOOL isNativePlate(UIView *v,UIView *host,NSArray *items){
-    if(!v||v==host||[v isKindOfClass:LEMGlass20Surface.class]||[v isKindOfClass:LEMGlass20Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
+    if(!v||v==host||[v isKindOfClass:LEMGlass21Surface.class]||[v isKindOfClass:LEMGlass21Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
     if([v isKindOfClass:UIControl.class]||[v isKindOfClass:UILabel.class]||[v isKindOfClass:UIScrollView.class])return NO;
     CGRect f=[v convertRect:v.bounds toView:host];
     if(f.size.width<host.bounds.size.width*.87||f.size.height<12||f.size.height>190||CGRectIsEmpty(CGRectIntersection(f,host.bounds)))return NO;
@@ -457,7 +457,7 @@ static BOOL busy(UIView *v);
 static BOOL dockGeometry(UIView *mini,UIView *bar,CGRect *tabRect,CGRect *miniRect){
     if(!visible(mini)||!visible(bar)||mini.window!=bar.window||!mini.superview||busy(mini))return NO;
     CGRect b=bar.bounds;
-    LEMGlass20Surface *surface=objc_getAssociatedObject(bar,&surfaceKey);
+    LEMGlass21Surface *surface=objc_getAssociatedObject(bar,&surfaceKey);
     CGFloat h=surface?surface.frame.size.height:MIN(58,b.size.height-bar.safeAreaInsets.bottom);
     CGFloat y=surface?surface.frame.origin.y:b.origin.y;
     if(b.size.width<300||h<40||h>75)return NO;
@@ -592,14 +592,14 @@ static void updatePivot(UIView *host){
     // Hide only full-width, decorative plain/image/effect views, never buttons or tab ancestors.
     NSArray *holders=content&&content!=host?@[host,content]:@[host];
     for(UIView *parent in holders)for(UIView *v in [parent.subviews copy]){
-        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass20Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
+        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass21Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
         if(v.bounds.size.width<parent.bounds.size.width*.87||v.bounds.size.height<25||v.bounds.size.height>180)continue;
         NSString *name=NSStringFromClass(v.class).lowercaseString;
         BOOL decorative=[v isKindOfClass:UIVisualEffectView.class]||[v isKindOfClass:UIImageView.class]||(!v.userInteractionEnabled&&([name containsString:@"background"]||[name containsString:@"backdrop"]||[name containsString:@"blur"]));
         if(decorative)hideSafe(v,protected);
     }
     removeOldPlate(host,items);
-    LEMGlass20Surface *surface=ensureSurface(host,frame);
+    LEMGlass21Surface *surface=ensureSurface(host,frame);
     placeBehindTabs(host,items,surface);
     surface.edge.hidden=YES;[objc_getAssociatedObject(host,&rimKey) removeFromSuperview];
     UIView *pill=objc_getAssociatedObject(host,&pillKey);
@@ -611,7 +611,7 @@ static void updatePivot(UIView *host){
     if(pill.superview!=parent){
         if(parent==host)[host insertSubview:pill aboveSubview:surface];else [parent insertSubview:pill atIndex:0];
     }
-    LEMGlass20Drag *drag=installDrag(host,pill);
+    LEMGlass21Drag *drag=installDrag(host,pill);
     if(drag.dragging)return;
     if(CGRectIsNull(chosen)){pill.alpha=0;return;}
     CGRect target=CGRectIntersection(CGRectInset(frame,4,4),CGRectInset(chosen,3,0));
@@ -633,7 +633,7 @@ static void rightLayout(UIView *v,SEL s){
     if(!v.window||v.bounds.size.width<35||v.bounds.size.width>260||v.bounds.size.height<25||v.bounds.size.height>90)return;
     @try{
         CGRect f=CGRectInset(v.bounds,2,3);if(f.size.width<28||f.size.height<24)return;
-        clear(v);LEMGlass20Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
+        clear(v);LEMGlass21Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
     }@catch(NSException *e){}
 }
 
@@ -757,12 +757,12 @@ static void requestFold(BOOL compact){
     if([objc_getAssociatedObject(mini,&foldKey) boolValue]==compact)return;
     applyCompact(mini,compact,YES);
 }
-@interface LEMGlass20Vertical : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass21Vertical : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIWindow *window;
 @property(nonatomic) BOOL consumed;
 - (void)pan:(UIPanGestureRecognizer *)g;
 @end
-@implementation LEMGlass20Vertical
+@implementation LEMGlass21Vertical
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
     if(!canCompact(currentMini)||currentMini.window!=self.window)return NO;
     UIView *v=touch.view;
@@ -791,12 +791,12 @@ static void requestFold(BOOL compact){
 static void installVertical(UIView *host){
     UIWindow *w=host.window;
     if(!w||objc_getAssociatedObject(w,&verticalKey))return;
-    LEMGlass20Vertical *d=[LEMGlass20Vertical new];d.window=w;
+    LEMGlass21Vertical *d=[LEMGlass21Vertical new];d.window=w;
     UIPanGestureRecognizer *g=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];g.delegate=d;g.maximumNumberOfTouches=1;g.cancelsTouchesInView=NO;g.delaysTouchesBegan=NO;g.delaysTouchesEnded=NO;
     [w addGestureRecognizer:g];objc_setAssociatedObject(w,&verticalKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 // Motion is decorative only: the original thumbnail tap opens the native player.
-@interface LEMGlass20Motion : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass21Motion : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIWindow *window;
 @property(nonatomic,strong) UIImage *art;
 @property(nonatomic,strong) UIColor *accent;
@@ -825,7 +825,7 @@ static UIImageView *thumbnailAt(UIView *root,CGPoint point,UIWindow *window,NSUI
     for(UIView *child in root.subviews.reverseObjectEnumerator){UIImageView *im=thumbnailAt(child,point,window,depth+1);if(im)return im;}
     return nil;
 }
-@implementation LEMGlass20Motion
+@implementation LEMGlass21Motion
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return YES;}
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
     self.art=nil;self.captured=0;
@@ -847,14 +847,14 @@ static UIImageView *thumbnailAt(UIView *root,CGPoint point,UIWindow *window,NSUI
 @end
 static void installMotion(UIWindow *w){
     if(!w||objc_getAssociatedObject(w,&motionKey))return;
-    LEMGlass20Motion *d=[LEMGlass20Motion new];d.window=w;
+    LEMGlass21Motion *d=[LEMGlass21Motion new];d.window=w;
     UITapGestureRecognizer *g=[[UITapGestureRecognizer alloc] initWithTarget:d action:@selector(tap:)];g.delegate=d;g.cancelsTouchesInView=NO;g.delaysTouchesBegan=NO;g.delaysTouchesEnded=NO;
     [w addGestureRecognizer:g];objc_setAssociatedObject(w,&motionKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
-@interface LEMGlass20Ambient : UIView
+@interface LEMGlass21Ambient : UIView
 @property(nonatomic,strong) CAGradientLayer *glow;
 @end
-@implementation LEMGlass20Ambient
+@implementation LEMGlass21Ambient
 - (instancetype)initWithFrame:(CGRect)f{
     if((self=[super initWithFrame:f])){self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.glow=[CAGradientLayer layer];self.glow.startPoint=CGPointMake(.5,0);self.glow.endPoint=CGPointMake(.5,1);[self.layer addSublayer:self.glow];}return self;
 }
@@ -862,7 +862,7 @@ static void installMotion(UIWindow *w){
 @end
 static void watchMotion(UIViewController *vc){
     UIView *v=vc.viewIfLoaded;UIWindow *w=v.window;if(!visible(v)||!w)return;
-    LEMGlass20Motion *d=objc_getAssociatedObject(w,&motionKey);if(!d)return;
+    LEMGlass21Motion *d=objc_getAssociatedObject(w,&motionKey);if(!d)return;
     CGRect target=[v convertRect:v.bounds toView:w];
     if(target.size.width<w.bounds.size.width*.80||target.size.height<110||target.size.height>320||target.size.width/target.size.height<1.15||CGRectGetMinY(target)>w.bounds.size.height*.48)return;
     if(d.art&&d.captured>0&&CACurrentMediaTime()-d.captured<1.6&&!d.flying){
@@ -878,10 +878,10 @@ static void watchMotion(UIViewController *vc){
     // Use only the color of the thumbnail that opened this specific watch view.
     if(!studioAmbient||economy()||d.watch!=vc||!d.accent||!v.superview||UIAccessibilityIsReduceTransparencyEnabled()){[objc_getAssociatedObject(vc,&ambientKey) removeFromSuperview];return;}
     UIView *parent=v.superview;CGRect span=[v convertRect:v.bounds toView:parent];CGFloat room=CGRectGetMaxY(parent.bounds)-CGRectGetMaxY(span);
-    LEMGlass20Ambient *band=objc_getAssociatedObject(vc,&ambientKey);
+    LEMGlass21Ambient *band=objc_getAssociatedObject(vc,&ambientKey);
     if(room<25){[band removeFromSuperview];return;}
     CGRect area=CGRectMake(span.origin.x,CGRectGetMaxY(span),span.size.width,MIN(75,room));
-    if(!band){band=[[LEMGlass20Ambient alloc] initWithFrame:area];objc_setAssociatedObject(vc,&ambientKey,band,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(!band){band=[[LEMGlass21Ambient alloc] initWithFrame:area];objc_setAssociatedObject(vc,&ambientKey,band,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     band.frame=area;band.glow.colors=@[(id)[d.accent colorWithAlphaComponent:.33].CGColor,(id)[d.accent colorWithAlphaComponent:.10].CGColor,(id)[d.accent colorWithAlphaComponent:0].CGColor];band.glow.locations=@[@0,@.4,@1];
     if(band.superview!=parent)[parent addSubview:band];
 }
@@ -889,29 +889,125 @@ static void watchLayout(UIViewController *vc,SEL sel){((void(*)(id,SEL))oldWatch
 static void watchDisappear(UIViewController *vc,SEL sel,BOOL animated){
     ((void(*)(id,SEL,BOOL))oldWatchDisappear)(vc,sel,animated);
     [objc_getAssociatedObject(vc,&ambientKey) removeFromSuperview];objc_setAssociatedObject(vc,&ambientKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    LEMGlass20Motion *d=objc_getAssociatedObject(vc.viewIfLoaded.window,&motionKey);if(d.watch==vc){d.watch=nil;d.accent=nil;[d.flying removeFromSuperview];}
+    LEMGlass21Motion *d=objc_getAssociatedObject(vc.viewIfLoaded.window,&motionKey);if(d.watch==vc){d.watch=nil;d.accent=nil;[d.flying removeFromSuperview];}
 }
-// Glass Search is limited to the actual search field. Preserve text entry and keyboard.
+// Glass Search: target the real editable field, independently of private search-box class.
+static NSHashTable<UITextField *> *studioSearchFields;
+@interface LEMGlass21SearchPlate : UIView
+@property(nonatomic,strong) UIVisualEffectView *blur;
+@property(nonatomic,strong) CAGradientLayer *shine;
+- (void)style;
+@end
+@implementation LEMGlass21SearchPlate
+- (instancetype)initWithFrame:(CGRect)f{
+    if((self=[super initWithFrame:f])){
+        self.userInteractionEnabled=NO;self.accessibilityElementsHidden=YES;self.opaque=NO;self.layer.masksToBounds=YES;self.layer.cornerCurve=kCACornerCurveContinuous;
+        self.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+        self.blur=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
+        self.blur.userInteractionEnabled=NO;self.blur.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self addSubview:self.blur];
+        self.shine=[CAGradientLayer layer];self.shine.startPoint=CGPointMake(.15,0);self.shine.endPoint=CGPointMake(.85,1);self.shine.locations=@[@0,@.21,@.62,@1];[self.layer addSublayer:self.shine];
+        [self style];
+    }return self;
+}
+- (void)style{
+    BOOL dark=self.traitCollection.userInterfaceStyle!=UIUserInterfaceStyleLight;
+    self.blur.alpha=MIN(.94,.35+studioBlur*.021+studioTint*.5);
+    self.backgroundColor=[(dark?UIColor.whiteColor:UIColor.blackColor) colorWithAlphaComponent:dark?.055: .035];
+    CGFloat highlight=MIN(.36,.16+studioTint*.18);
+    self.shine.colors=dark?@[(id)[UIColor colorWithWhite:1 alpha:highlight].CGColor,(id)[UIColor colorWithWhite:1 alpha:.065].CGColor,(id)[UIColor colorWithWhite:1 alpha:.015].CGColor,(id)[UIColor colorWithWhite:1 alpha:.10].CGColor]:@[(id)[UIColor colorWithWhite:1 alpha:.7].CGColor,(id)[UIColor colorWithWhite:1 alpha:.35].CGColor,(id)[UIColor colorWithWhite:1 alpha:.10].CGColor,(id)[UIColor colorWithWhite:1 alpha:.35].CGColor];
+    if(UIAccessibilityIsReduceTransparencyEnabled()){self.blur.alpha=0;self.backgroundColor=UIColor.secondarySystemBackgroundColor;self.shine.hidden=YES;}else self.shine.hidden=NO;
+}
+- (void)layoutSubviews{[super layoutSubviews];[CATransaction begin];[CATransaction setDisableActions:YES];self.layer.cornerRadius=self.bounds.size.height*.5;self.blur.frame=self.bounds;self.shine.frame=self.bounds;[CATransaction commit];}
+- (void)traitCollectionDidChange:(UITraitCollection *)old{[super traitCollectionDidChange:old];[self style];}
+@end
+static BOOL isSearchField(UITextField *field){
+    if(![field isKindOfClass:UITextField.class]||!field.window||field.secureTextEntry)return NO;
+    CGRect f=[field convertRect:field.bounds toView:field.window];CGRect w=field.window.bounds;
+    if(f.size.width<w.size.width*.38||f.size.height<24||f.size.height>76||CGRectGetMinY(f)>w.size.height*.28)return NO;
+    NSString *hint=(field.placeholder?:field.attributedPlaceholder.string?:@"").lowercaseString;
+    if([hint containsString:@"youtube"]&&([hint containsString:@"search"]||[hint containsString:@"tìm"]))return YES;
+    for(UIView *v=field;v&&v!=field.window;v=v.superview){
+        NSString *n=NSStringFromClass(v.class).lowercaseString;
+        if([n hasPrefix:@"yt"]&&([n containsString:@"searchbox"]||[n containsString:@"searchfield"]||[n containsString:@"searchbar"]||[n containsString:@"searchtext"]))return YES;
+    }
+    for(UIResponder *v=field.nextResponder;v&&v!=field.window;v=v.nextResponder){
+        NSString *n=NSStringFromClass(v.class).lowercaseString;
+        if([n hasPrefix:@"yt"]&&[n containsString:@"search"]&&![n containsString:@"setting"])return YES;
+    }
+    return NO;
+}
+static void restoreSearch(UITextField *field){
+    NSDictionary *state=objc_getAssociatedObject(field,&searchStateKey);
+    [objc_getAssociatedObject(field,&searchPlateKey) removeFromSuperview];objc_setAssociatedObject(field,&searchPlateKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(!state)return;
+    id color=state[@"color"],image=state[@"image"];
+    field.backgroundColor=color==NSNull.null?nil:color;field.background=image==NSNull.null?nil:image;
+    field.borderStyle=[state[@"border"] integerValue];
+    for(NSArray *entry in state[@"views"]){UIView *v=entry[0];if([v isDescendantOfView:field])v.hidden=[entry[1] boolValue];}
+    objc_setAssociatedObject(field,&searchStateKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(field,&searchAnimKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static void applySearch(UITextField *field,BOOL animate){
+    if(!studioSearch){restoreSearch(field);return;}
+    if(!isSearchField(field))return;
+    [studioSearchFields addObject:field];
+    NSMutableDictionary *state=objc_getAssociatedObject(field,&searchStateKey);
+    if(!state){state=[@{@"color":field.backgroundColor?:NSNull.null,@"image":field.background?:NSNull.null,@"border":@(field.borderStyle),@"views":[NSMutableArray array]} mutableCopy];objc_setAssociatedObject(field,&searchStateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    // Do not replace UITextField, its delegate, left/right buttons, or editing state.
+    field.backgroundColor=UIColor.clearColor;field.background=nil;
+    // Keep native borderStyle so text rect/insets remain unchanged.
+    LEMGlass21SearchPlate *plate=objc_getAssociatedObject(field,&searchPlateKey);
+    if(!plate){plate=[[LEMGlass21SearchPlate alloc] initWithFrame:field.bounds];objc_setAssociatedObject(field,&searchPlateKey,plate,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    NSMutableArray *saved=state[@"views"];
+    for(UIView *v in [field.subviews copy]){
+        if(v==plate||v==field.leftView||v==field.rightView||v.hidden||v.userInteractionEnabled)continue;
+        NSString *n=NSStringFromClass(v.class).lowercaseString;
+        if(v.bounds.size.width<field.bounds.size.width*.9||v.bounds.size.height<field.bounds.size.height*.8)continue;
+        if([v isKindOfClass:UIImageView.class]||[n containsString:@"background"]){
+            BOOL known=NO;for(NSArray *entry in saved)if(entry[0]==v){known=YES;break;}
+            if(!known)[saved addObject:@[v,@(v.hidden)]];v.hidden=YES;
+        }
+    }
+    if(plate.superview!=field)[field insertSubview:plate atIndex:0];else if(field.subviews.firstObject!=plate)[field sendSubviewToBack:plate];
+    plate.frame=field.bounds;[plate style];
+    if(animate&&!objc_getAssociatedObject(field,&searchAnimKey)&&!economy()&&!UIAccessibilityIsReduceMotionEnabled()){
+        objc_setAssociatedObject(field,&searchAnimKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        CABasicAnimation *a=[CABasicAnimation animationWithKeyPath:@"transform.scale.x"];a.fromValue=@.84;a.toValue=@1;a.duration=.30;a.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];[plate.layer addAnimation:a forKey:@"lem.search.open"];
+    }
+}
+static void searchTree(UIView *v,NSUInteger depth){
+    if(!v||depth>5)return;
+    if([v isKindOfClass:UITextField.class]){applySearch((UITextField *)v,YES);return;}
+    for(UIView *child in [v.subviews copy])searchTree(child,depth+1);
+}
 static void searchLayout(UIView *v,SEL sel){
     ((void(*)(id,SEL))oldSearchLayout)(v,sel);
-    LEMGlass20Surface *old=objc_getAssociatedObject(v,&surfaceKey);
-    if(!studioSearch){[old removeFromSuperview];objc_setAssociatedObject(v,&surfaceKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);id b=objc_getAssociatedObject(v,&bgKey);if(b)v.backgroundColor=b==NSNull.null?nil:b;return;}
-    if(!v.window||v.bounds.size.width<100||v.bounds.size.height<30||v.bounds.size.height>70)return;
-    @try{
-        CGRect f=CGRectInset(v.bounds,2,2);clear(v);LEMGlass20Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
-    }@catch(NSException *e){}
+    @try{searchTree(v,0);}@catch(NSException *e){NSLog(@"[LEM Glass] search layout: %@",e.reason);}
+}
+static void installSearchObserver(void){
+    studioSearchFields=[NSHashTable weakObjectsHashTable];
+    [NSNotificationCenter.defaultCenter addObserverForName:UITextFieldTextDidBeginEditingNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
+        if(![note.object isKindOfClass:UITextField.class])return;
+        __weak UITextField *weak=note.object;
+        @try{applySearch(weak,YES);}@catch(NSException *e){}
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(.20*NSEC_PER_SEC)),dispatch_get_main_queue(),^{UITextField *f=weak;if(f.isFirstResponder)@try{applySearch(f,YES);}@catch(NSException *e){}});
+    }];
+    [NSNotificationCenter.defaultCenter addObserverForName:UITextFieldTextDidEndEditingNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
+        if([note.object isKindOfClass:UITextField.class])objc_setAssociatedObject(note.object,&searchAnimKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }];
 }
 static void studioRefresh(void){
     loadStudio();
-    for(LEMGlass20Surface *v in studioSurfaces.allObjects){
+    for(UITextField *f in studioSearchFields.allObjects){if(studioSearch)applySearch(f,NO);else restoreSearch(f);}
+    for(LEMGlass21Surface *v in studioSurfaces.allObjects){
         v.nextCapture=0;
         [v.host setNeedsLayout];[v refresh];
     }
     [currentPivot setNeedsLayout];
 }
-@interface LEMGlass20Settings : UITableViewController
+@interface LEMGlass21Settings : UITableViewController
 @end
-@implementation LEMGlass20Settings
+@implementation LEMGlass21Settings
 - (void)viewDidLoad{
     [super viewDidLoad];self.title=@"LEM Glass Studio";
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeStudio)];
@@ -924,7 +1020,7 @@ static void studioRefresh(void){
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s{
     if(s==0)return @"Chọn nhanh một kiểu kính hoặc tự chỉnh bên dưới.";
     if(s==2)return @"Chế độ nhẹ tự dùng blur khi máy nóng hoặc tiết kiệm pin. Hiệu ứng video phụ thuộc hook tương thích.";
-    if(s==3)return @"LEM Glass Studio 2.0 • YouTube 21.33.6 • iOS 16+";
+    if(s==3)return @"LEM Glass Studio 2.1 • YouTube 21.33.6 • iOS 16+";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
@@ -939,7 +1035,7 @@ static void studioRefresh(void){
         UISlider *slider=[[UISlider alloc] initWithFrame:CGRectMake(0,0,146,36)];
         slider.minimumValue=0;slider.maximumValue=[@[@60,@20,@100,@150][ip.row] floatValue];slider.value=[values[ip.row] floatValue];slider.tag=ip.row;slider.accessibilityLabel=titles[ip.row];[slider addTarget:self action:@selector(slide:) forControlEvents:UIControlEventValueChanged];c.accessoryView=slider;c.selectionStyle=UITableViewCellSelectionStyleNone;
     }else if(ip.section==2){
-        NSArray *titles=@[@"Rung phản hồi",@"Tự giảm hiệu ứng khi máy nóng",@"Video Morph (thử nghiệm)",@"Ambient Color (thử nghiệm)",@"Glass Search (thử nghiệm)"];
+        NSArray *titles=@[@"Rung phản hồi",@"Tự giảm hiệu ứng khi máy nóng",@"Video Morph (thử nghiệm)",@"Ambient Color (thử nghiệm)",@"Glass Search (ô tìm kiếm)"];
         NSArray *values=@[@(studioHaptics),@(studioPower),@(studioMorph),@(studioAmbient),@(studioSearch)];
         c.textLabel.text=titles[ip.row];c.textLabel.font=[UIFont systemFontOfSize:15];
         UISwitch *sw=[UISwitch new];sw.on=[values[ip.row] boolValue];sw.tag=ip.row;sw.accessibilityLabel=titles[ip.row];[sw addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];c.accessoryView=sw;c.selectionStyle=UITableViewCellSelectionStyleNone;
@@ -977,7 +1073,7 @@ static void studioRefresh(void){
 @end
 static void openStudio(UIViewController *vc,SEL sel,id sender){
     if(!vc.viewIfLoaded.window||vc.presentedViewController)return;
-    LEMGlass20Settings *p=[[LEMGlass20Settings alloc] initWithStyle:UITableViewStyleInsetGrouped];UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:p];nav.modalPresentationStyle=UIModalPresentationPageSheet;[vc presentViewController:nav animated:YES completion:nil];
+    LEMGlass21Settings *p=[[LEMGlass21Settings alloc] initWithStyle:UITableViewStyleInsetGrouped];UINavigationController *nav=[[UINavigationController alloc] initWithRootViewController:p];nav.modalPresentationStyle=UIModalPresentationPageSheet;[vc presentViewController:nav animated:YES completion:nil];
 }
 static void studioEntry(UIViewController *vc){
     UIView *v=vc.viewIfLoaded;if(!v.window||v.bounds.size.width<200||v.bounds.size.height<160)return;
@@ -1006,7 +1102,7 @@ __attribute__((constructor)) static void start(void){
         NSBundle *b=NSBundle.mainBundle;
         if(![b.bundleIdentifier isEqualToString:@"com.google.ios.youtube"]||![[b objectForInfoDictionaryKey:@"CFBundleShortVersionString"] isEqualToString:@"21.33.6"])return;
         dispatch_async(dispatch_get_main_queue(),^{
-            loadStudio();studioSurfaces=[NSHashTable weakObjectsHashTable];
+            loadStudio();studioSurfaces=[NSHashTable weakObjectsHashTable];installSearchObserver();
             // Keep native content-under-tab layout, not the old colored blur plate.
             flag(@"mainAppCoreClientEnableModernIaFrostedBottomBar");flag(@"mainAppCoreClientEnableModernIaFrostedPivotBar");
             Class p=NSClassFromString(@"YTPivotBarView");
