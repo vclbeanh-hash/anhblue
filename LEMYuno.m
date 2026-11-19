@@ -1,4 +1,4 @@
-/* LEM Yuno v0.4 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v0.5 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
    Design reference: https://github.com/danielkanan/Yuno/tree/v1.0.0 */
 #import <UIKit/UIKit.h>
@@ -15,7 +15,12 @@ static NSString * const Ksb=@"LEMYuno.sponsor";
 static NSString * const Khd=@"LEMYuno.hd";
 static NSString * const Kglass=@"LEMYuno.glass";
 static NSString * const Kmini=@"LEMYuno.mini";
-static char videoKey,glassKey;
+static char videoKey,glassKey,glassEffectKey,glassBgKey;
+static __weak id lastTickPlayer;
+static CFTimeInterval lastTickAt;
+static NSString *lastRateID;
+static NSUInteger rateAttempts;
+static CFTimeInterval lastRateAt;
 static IMP origTick,origPivot,origMini;
 static NSString *sbID;
 static NSArray<NSArray<NSNumber *> *> *segments;
@@ -84,7 +89,7 @@ static void layout(UIViewController *t,SEL s){
     if([ident isEqual:objc_getAssociatedObject(t,&videoKey)])return;
     objc_setAssociatedObject(t,&videoKey,ident,OBJC_ASSOCIATION_COPY_NONATOMIC);
     // Leave the app's normal playback behavior alone until a speed is selected.
-    if([NSUserDefaults.standardUserDefaults objectForKey:Krate]){
+    if(!origTick&&[NSUserDefaults.standardUserDefaults objectForKey:Krate]){
         if(!applyRate(t,savedRate()))applyRate(t.parentViewController,savedRate());
     }
 }
@@ -157,7 +162,7 @@ static void getSegments(NSString *ident){
     [sbTask resume];
 }
 static BOOL preferHD(id player){
-    id video=getObj(player,@"activeVideo");
+    id video=getObj(player,@"contentVideo") ?: getObj(player,@"activeVideo");
     id formats=getObj(video,@"selectableVideoFormats");
     if(![formats isKindOfClass:NSArray.class]||![formats count])return NO;
     NSString *best=nil;NSInteger max=0;
@@ -187,6 +192,13 @@ static BOOL preferHD(id player){
 static void playerTick(id player){
     NSString *ident=getObj(player,@"contentVideoID");
     if(!validID(ident))return;
+    NSString *current=getObj(player,@"currentVideoID");
+    if(![current isEqual:ident])return; // Do not seek inside a different active stream.
+    if(![lastRateID isEqual:ident]){lastRateID=[ident copy];rateAttempts=0;lastRateAt=0;}
+    if([NSUserDefaults.standardUserDefaults objectForKey:Krate]&&rateAttempts<2&&CACurrentMediaTime()-lastRateAt>1.0){
+        lastRateAt=CACurrentMediaTime();rateAttempts++;
+        if(applyRate(player,savedRate()))rateAttempts=2;
+    }
     if(enabled(Khd)){
         if(![qualityID isEqual:ident]){qualityID=[ident copy];qualityAttempts=0;lastQuality=0;}
         CFTimeInterval now=CACurrentMediaTime();
@@ -199,48 +211,77 @@ static void playerTick(id player){
     if(![sbID isEqual:ident]){getSegments(ident);return;}
     if(!segments.count)return;
     id overlay=getObj(player,@"activeVideoPlayerOverlay");
-    double now=getTime(overlay,@"mediaTime");
+    double now=getTime(player,@"currentVideoMediaTime");
+    if(!isfinite(now))now=getTime(overlay,@"mediaTime");
     if(!isfinite(now))return;
-    double total=getTime(getObj(player,@"activeVideo"),@"totalMediaTime");
+    double total=getTime(player,@"currentVideoTotalMediaTime");
     for(NSUInteger i=0;i<segments.count;i++){
         NSArray *p=segments[i];double a=[p[0] doubleValue],b=[p[1] doubleValue];
         if([skipped containsObject:@(i)]||now<a||now>=b-.15)continue;
         if(isfinite(total)&&total>0&&b>=total)continue;
-        [skipped addObject:@(i)];seek(player,b);break;
+        [skipped addObject:@(i)];if(!seek(player,b))[skipped removeObject:@(i)];break;
     }
 }
 static void tick(id t,SEL s,id v,id tm){
     ((void(*)(id,SEL,id,id))origTick)(t,s,v,tm);
-    if(!NSThread.isMainThread)return;
-    @try{playerTick(t);}@catch(NSException *e){NSLog(@"[LEMYuno] player: %@",e.reason);}
+    // Some builds deliver player observer callbacks off-main. Move UI and state work to main.
+    __weak id weakPlayer=t;
+    void (^process)(void)=^{
+        id player=weakPlayer;if(!player)return;
+        CFTimeInterval now=CACurrentMediaTime();
+        if(lastTickPlayer==player&&now-lastTickAt<.22)return;
+        lastTickPlayer=player;lastTickAt=now;
+        @try{playerTick(player);}@catch(NSException *e){NSLog(@"[LEMYuno] player: %@",e.reason);}
+    };
+    if(NSThread.isMainThread)process();else dispatch_async(dispatch_get_main_queue(),process);
 }
-static void mini(id t,SEL s){if(!enabled(Kmini))((void(*)(id,SEL))origMini)(t,s);}
+static BOOL mini(id t,SEL s){return enabled(Kmini)?NO:((BOOL(*)(id,SEL))origMini)(t,s);}
 static void pivot(UIView *t,SEL s){
     ((void(*)(id,SEL))origPivot)(t,s);
-    UIVisualEffectView *glass=objc_getAssociatedObject(t,&glassKey);
-    if(!enabled(Kglass)){if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}return;}
     if(!t.window||t.bounds.size.width<120||t.bounds.size.height<30)return;
+    UIVisualEffectView *glass=objc_getAssociatedObject(t,&glassKey);
+    id blur=getObj(t,@"blurView");
+    if(!enabled(Kglass)){
+        if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+        id original=objc_getAssociatedObject(t,&glassBgKey);
+        if(original){t.backgroundColor=original==NSNull.null?nil:original;objc_setAssociatedObject(t,&glassBgKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+        if([blur isKindOfClass:UIVisualEffectView.class]){
+            id effect=objc_getAssociatedObject(blur,&glassEffectKey);
+            if(effect){((UIVisualEffectView *)blur).effect=effect==NSNull.null?nil:effect;objc_setAssociatedObject(blur,&glassEffectKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+        }
+        return;
+    }
+    if(!objc_getAssociatedObject(t,&glassBgKey))objc_setAssociatedObject(t,&glassBgKey,t.backgroundColor?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    t.backgroundColor=UIColor.clearColor;
+    if([blur isKindOfClass:UIVisualEffectView.class]){
+        if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+        UIVisualEffectView *native=blur;
+        if(!objc_getAssociatedObject(native,&glassEffectKey)){
+            objc_setAssociatedObject(native,&glassEffectKey,native.effect?:NSNull.null,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            native.effect=[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+        }
+        return;
+    }
     if(!glass){
         glass=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
         glass.userInteractionEnabled=NO;glass.layer.cornerRadius=20;glass.clipsToBounds=YES;
         glass.layer.borderWidth=.75;glass.layer.borderColor=[UIColor colorWithWhite:1 alpha:.24].CGColor;
         [t insertSubview:glass atIndex:0];objc_setAssociatedObject(t,&glassKey,glass,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    CGRect b=CGRectInset(t.bounds,5,3);
-    if(b.size.height>72)b.size.height=72;
-    glass.frame=b;
+    CGRect f=t.bounds;f.origin.x+=5;f.origin.y+=3;f.size.width-=10;f.size.height=MIN(f.size.height-6,72);glass.frame=f;
 }
 static void installExtra(void){
     Class pc=NSClassFromString(@"YTPlayerViewController");
-    SEL ts=NSSelectorFromString(@"singleVideo:currentVideoTimeDidChange:");
+    SEL ts=NSSelectorFromString(@"potentiallyMutatedSingleVideo:currentVideoTimeDidChange:");
+    if(!class_getInstanceMethod(pc,ts))ts=NSSelectorFromString(@"singleVideo:currentVideoTimeDidChange:");
     Method tm=class_getInstanceMethod(pc,ts);
     if(tm&&method_getNumberOfArguments(tm)==4){
         char ret[16]={0},a[16]={0},b[16]={0};method_getReturnType(tm,ret,sizeof ret);method_getArgumentType(tm,2,a,sizeof a);method_getArgumentType(tm,3,b,sizeof b);
         if(ret[0]=='v'&&a[0]=='@'&&b[0]=='@'){origTick=method_getImplementation(tm);class_replaceMethod(pc,ts,(IMP)tick,method_getTypeEncoding(tm));}
     }
-    Class p=NSClassFromString(@"YTPivotBar");
+    Class p=NSClassFromString(@"YTPivotBarView");
     if(p&&[p isSubclassOfClass:UIView.class])origPivot=hook(p,@selector(layoutSubviews),(IMP)pivot,NO);
-    origMini=hook(NSClassFromString(@"YTWatchMiniBarViewController"),NSSelectorFromString(@"updateMiniBarPlayerStateFromRenderer"),(IMP)mini,NO);
+    origMini=hook(NSClassFromString(@"YTWatchFloatingMiniplayerViewController"),NSSelectorFromString(@"isMiniplayerRendererPlaybackModePauseOnly"),(IMP)mini,YES);
 }
 static id switches(NSString *title,NSString *description,NSString *key){
     Class c=NSClassFromString(@"YTSettingsSectionItem");
@@ -292,8 +333,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.4",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.4",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.5",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.5",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -317,7 +358,7 @@ static void installSettings(void){
     class_replaceMethod(object_getClass(orderClass),os,(IMP)order,method_getTypeEncoding(om));
 }
 
-// v0.4.1: settings entry independent of YouTube's changing category model.
+// v0.5: settings entry independent of YouTube's changing category model.
 @interface LEMYunoPreferencesController : UITableViewController
 @property(nonatomic,strong) NSArray<NSDictionary *> *options;
 @end
@@ -332,7 +373,7 @@ static void installSettings(void){
       @{@"key":Ksb,@"title":@"SponsorBlock",@"note":@"Tra cứu ID video trên SponsorBlock"},
       @{@"key":Khd,@"title":@"Ưu tiên 1080p",@"note":@"Khi chất lượng video có sẵn"},
       @{@"key":Kglass,@"title":@"Liquid Glass",@"note":@"Thanh điều hướng (thử nghiệm)"},
-      @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Tùy chọn thử nghiệm"}
+      @{@"key":Kmini,@"title":@"Mini Player tăng cường",@"note":@"Cho phép phát trong mini player khi chế độ chỉ tạm dừng được yêu cầu"}
     ];
     self.tableView.rowHeight=66;
 }
@@ -341,7 +382,7 @@ static void installSettings(void){
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{return 2;}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)section{return section==0?self.options.count:1;}
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)section{return section==0?@"Tính năng":@"Trình phát";}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.4.1 • YouTube 21.33.6";}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)section{return section==0?@"Các lựa chọn được lưu tự động. PiP, Shorts và Google giữ nguyên từ ứng dụng YouTube.":@"LEM Yuno v0.5 • YouTube 21.33.6";}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     if(ip.section==0){
@@ -349,7 +390,7 @@ static void installSettings(void){
         cell.textLabel.text=row[@"title"];cell.detailTextLabel.text=row[@"note"];cell.detailTextLabel.numberOfLines=2;
         UISwitch *sw=[UISwitch new];sw.on=enabled(key);sw.tag=ip.row;
         BOOL supported=([key isEqual:Kad]?origAd!=NULL:[key isEqual:Kbg]?(origBG||origML)!=0:([key isEqual:Ksb]||[key isEqual:Khd])?origTick!=NULL:[key isEqual:Kglass]?origPivot!=NULL:origMini!=NULL);
-        sw.enabled=supported; if(!supported)cell.detailTextLabel.text=@"Không tìm thấy hook trên bản này";
+        sw.enabled=supported; if(!supported){sw.on=NO;cell.detailTextLabel.text=@"Không tìm thấy hook trên bản này";}
         [sw addTarget:self action:@selector(lemToggle:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView=sw;cell.selectionStyle=UITableViewCellSelectionStyleNone;
     }else{
