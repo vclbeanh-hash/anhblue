@@ -1,4 +1,4 @@
-/* LEM Yuno v0.3 — independent iOS tweak, inspired by Yuno.
+/* LEM Yuno v0.4 — independent iOS tweak, inspired by Yuno.
    Runtime selector references: https://github.com/dayanch96/YTLite
    Design reference: https://github.com/danielkanan/Yuno/tree/v1.0.0 */
 #import <UIKit/UIKit.h>
@@ -6,11 +6,24 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <math.h>
+#import <QuartzCore/QuartzCore.h>
 
 static NSString * const Kbg=@"LEMYuno.background";
 static NSString * const Kad=@"LEMYuno.adResponse";
 static NSString * const Krate=@"LEMYuno.speed";
-static char videoKey;
+static NSString * const Ksb=@"LEMYuno.sponsor";
+static NSString * const Khd=@"LEMYuno.hd";
+static NSString * const Kglass=@"LEMYuno.glass";
+static NSString * const Kmini=@"LEMYuno.mini";
+static char videoKey,glassKey;
+static IMP origTick,origPivot,origMini;
+static NSString *sbID;
+static NSArray<NSArray<NSNumber *> *> *segments;
+static NSMutableSet<NSNumber *> *skipped;
+static NSURLSessionDataTask *sbTask;
+static NSString *qualityID;
+static NSUInteger qualityAttempts;
+static CFTimeInterval lastQuality;
 static __weak UIViewController *activeOverlay;
 static IMP origOrder,origCategory;
 static const NSUInteger LemCategory=74193;
@@ -80,12 +93,161 @@ static BOOL available(id obj,SEL sel,unsigned int argc){
     Method m=class_getInstanceMethod(object_getClass(obj),sel);
     return m&&method_getNumberOfArguments(m)==argc;
 }
+// Private video methods are called only with the expected runtime signature.
+static id getObj(id obj,NSString *name){
+    SEL sel=NSSelectorFromString(name);
+    if(!available(obj,sel,2))return nil;
+    Method m=class_getInstanceMethod([obj class],sel);
+    char ret[16]={0};method_getReturnType(m,ret,sizeof ret);
+    return ret[0]=='@'?((id(*)(id,SEL))objc_msgSend)(obj,sel):nil;
+}
+static double getTime(id obj,NSString *name){
+    SEL sel=NSSelectorFromString(name);
+    if(!available(obj,sel,2))return NAN;
+    Method m=class_getInstanceMethod([obj class],sel);
+    char ret[16]={0};method_getReturnType(m,ret,sizeof ret);
+    if(ret[0]=='d')return ((double(*)(id,SEL))objc_msgSend)(obj,sel);
+    if(ret[0]=='f')return ((float(*)(id,SEL))objc_msgSend)(obj,sel);
+    return NAN;
+}
+static BOOL seek(id obj,double time){
+    for(NSString *name in @[@"seekToTime:",@"scrubToTime:"]){
+        SEL sel=NSSelectorFromString(name);
+        if(!available(obj,sel,3))continue;
+        Method m=class_getInstanceMethod([obj class],sel);
+        char arg[16]={0},ret[16]={0};method_getArgumentType(m,2,arg,sizeof arg);method_getReturnType(m,ret,sizeof ret);
+        if(ret[0]!='v')continue;
+        if(arg[0]=='d'){((void(*)(id,SEL,double))objc_msgSend)(obj,sel,time);return YES;}
+        if(arg[0]=='f'){((void(*)(id,SEL,float))objc_msgSend)(obj,sel,(float)time);return YES;}
+    }
+    return NO;
+}
+static BOOL validID(id ident){
+    if(![ident isKindOfClass:NSString.class]||[ident length]!=11)return NO;
+    NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"];
+    return [ident rangeOfCharacterFromSet:allowed.invertedSet].location==NSNotFound;
+}
+static void resetSponsor(void){
+    [sbTask cancel];sbTask=nil;sbID=nil;segments=nil;skipped=nil;
+}
+static void getSegments(NSString *ident){
+    [sbTask cancel];sbID=[ident copy];segments=nil;skipped=[NSMutableSet set];
+    NSURLComponents *u=[NSURLComponents componentsWithString:@"https://sponsor.ajay.app/api/skipSegments"];
+    u.queryItems=@[[NSURLQueryItem queryItemWithName:@"videoID" value:ident],[NSURLQueryItem queryItemWithName:@"categories" value:@"[\"sponsor\"]"]];
+    NSMutableURLRequest *req=[NSMutableURLRequest requestWithURL:u.URL cachePolicy:NSURLRequestUseProtocolCachePolicy timeoutInterval:12];
+    // This endpoint receives the public video ID, never account cookies or credentials.
+    NSURLSessionConfiguration *cfg=NSURLSessionConfiguration.ephemeralSessionConfiguration;
+    cfg.HTTPCookieStorage=nil;cfg.HTTPShouldSetCookies=NO;cfg.URLCredentialStorage=nil;
+    NSURLSession *session=[NSURLSession sessionWithConfiguration:cfg];
+    sbTask=[session dataTaskWithRequest:req completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
+        NSArray *json=nil;
+        if(!error&&data.length<262144&&[(NSHTTPURLResponse *)response statusCode]==200)
+            json=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        NSMutableArray *out=[NSMutableArray array];
+        if([json isKindOfClass:NSArray.class])for(id row in json){
+            if(![row isKindOfClass:NSDictionary.class]||![row[@"category"] isEqual:@"sponsor"])continue;
+            id p=row[@"segment"];if(![p isKindOfClass:NSArray.class]||[p count]!=2)continue;
+            if(![p[0] isKindOfClass:NSNumber.class]||![p[1] isKindOfClass:NSNumber.class])continue;
+            double a=[p[0] doubleValue],b=[p[1] doubleValue];
+            if(isfinite(a)&&isfinite(b)&&a>=0&&b>a+.1&&b<43200)[out addObject:@[@(a),@(b)]];
+        }
+        dispatch_async(dispatch_get_main_queue(),^{if(enabled(Ksb)&&[sbID isEqual:ident])segments=[out copy];});
+        [session finishTasksAndInvalidate];
+    }];
+    [sbTask resume];
+}
+static BOOL preferHD(id player){
+    id video=getObj(player,@"activeVideo");
+    id formats=getObj(video,@"selectableVideoFormats");
+    if(![formats isKindOfClass:NSArray.class]||![formats count])return NO;
+    NSString *best=nil;NSInteger max=0;
+    for(id f in formats){
+        id label=getObj(f,@"qualityLabel");
+        if(![label isKindOfClass:NSString.class]||[label rangeOfString:@"p"].location==NSNotFound)continue;
+        NSInteger n=[label integerValue];
+        if(n>0&&n<=1080&&n>=max){
+            if(n>max||!best||[label hasSuffix:@"60"]){max=n;best=label;}
+        }
+    }
+    if(!best)return NO;
+    Class fc=NSClassFromString(@"MLQuickMenuVideoQualitySettingFormatConstraint");
+    SEL init=NSSelectorFromString(@"initWithVideoQualitySetting:formatSelectionReason:qualityLabel:");
+    SEL set=NSSelectorFromString(@"setVideoFormatConstraint:");
+    id obj=[fc alloc];
+    if(!available(obj,init,5)||!available(video,set,3))return NO;
+    Method im=class_getInstanceMethod(fc,init);
+    char a[16]={0},b[16]={0},c[16]={0},ret[16]={0};
+    method_getArgumentType(im,2,a,sizeof a);method_getArgumentType(im,3,b,sizeof b);method_getArgumentType(im,4,c,sizeof c);method_getReturnType(im,ret,sizeof ret);
+    if(a[0]!='i'||(b[0]!='q'&&b[0]!='Q')||c[0]!='@'||ret[0]!='@')return NO;
+    id constraint=((id(*)(id,SEL,int,NSInteger,id))objc_msgSend)(obj,init,3,2,best);
+    if(!constraint)return NO;
+    ((void(*)(id,SEL,id))objc_msgSend)(video,set,constraint);
+    return YES;
+}
+static void playerTick(id player){
+    NSString *ident=getObj(player,@"contentVideoID");
+    if(!validID(ident))return;
+    if(enabled(Khd)){
+        if(![qualityID isEqual:ident]){qualityID=[ident copy];qualityAttempts=0;lastQuality=0;}
+        CFTimeInterval now=CACurrentMediaTime();
+        if(qualityAttempts<4&&now-lastQuality>2){
+            lastQuality=now;qualityAttempts++;
+            if(preferHD(player))qualityAttempts=4;
+        }
+    }
+    if(!enabled(Ksb)){if(sbID)resetSponsor();return;}
+    if(![sbID isEqual:ident]){getSegments(ident);return;}
+    if(!segments.count)return;
+    id overlay=getObj(player,@"activeVideoPlayerOverlay");
+    double now=getTime(overlay,@"mediaTime");
+    if(!isfinite(now))return;
+    double total=getTime(getObj(player,@"activeVideo"),@"totalMediaTime");
+    for(NSUInteger i=0;i<segments.count;i++){
+        NSArray *p=segments[i];double a=[p[0] doubleValue],b=[p[1] doubleValue];
+        if([skipped containsObject:@(i)]||now<a||now>=b-.15)continue;
+        if(isfinite(total)&&total>0&&b>=total)continue;
+        [skipped addObject:@(i)];seek(player,b);break;
+    }
+}
+static void tick(id t,SEL s,id v,id tm){
+    ((void(*)(id,SEL,id,id))origTick)(t,s,v,tm);
+    if(!NSThread.isMainThread)return;
+    @try{playerTick(t);}@catch(NSException *e){NSLog(@"[LEMYuno] player: %@",e.reason);}
+}
+static void mini(id t,SEL s){if(!enabled(Kmini))((void(*)(id,SEL))origMini)(t,s);}
+static void pivot(UIView *t,SEL s){
+    ((void(*)(id,SEL))origPivot)(t,s);
+    UIVisualEffectView *glass=objc_getAssociatedObject(t,&glassKey);
+    if(!enabled(Kglass)){if(glass){[glass removeFromSuperview];objc_setAssociatedObject(t,&glassKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}return;}
+    if(!t.window||t.bounds.size.width<120||t.bounds.size.height<30)return;
+    if(!glass){
+        glass=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+        glass.userInteractionEnabled=NO;glass.layer.cornerRadius=20;glass.clipsToBounds=YES;
+        glass.layer.borderWidth=.75;glass.layer.borderColor=[UIColor colorWithWhite:1 alpha:.24].CGColor;
+        [t insertSubview:glass atIndex:0];objc_setAssociatedObject(t,&glassKey,glass,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGRect b=CGRectInset(t.bounds,5,3);
+    if(b.size.height>72)b.size.height=72;
+    glass.frame=b;
+}
+static void installExtra(void){
+    Class pc=NSClassFromString(@"YTPlayerViewController");
+    SEL ts=NSSelectorFromString(@"singleVideo:currentVideoTimeDidChange:");
+    Method tm=class_getInstanceMethod(pc,ts);
+    if(tm&&method_getNumberOfArguments(tm)==4){
+        char ret[16]={0},a[16]={0},b[16]={0};method_getReturnType(tm,ret,sizeof ret);method_getArgumentType(tm,2,a,sizeof a);method_getArgumentType(tm,3,b,sizeof b);
+        if(ret[0]=='v'&&a[0]=='@'&&b[0]=='@'){origTick=method_getImplementation(tm);class_replaceMethod(pc,ts,(IMP)tick,method_getTypeEncoding(tm));}
+    }
+    Class p=NSClassFromString(@"YTPivotBar");
+    if(p&&[p isSubclassOfClass:UIView.class])origPivot=hook(p,@selector(layoutSubviews),(IMP)pivot,NO);
+    origMini=hook(NSClassFromString(@"YTWatchMiniBarViewController"),NSSelectorFromString(@"updateMiniBarPlayerStateFromRenderer"),(IMP)mini,NO);
+}
 static id switches(NSString *title,NSString *description,NSString *key){
     Class c=NSClassFromString(@"YTSettingsSectionItem");
     SEL s=NSSelectorFromString(@"switchItemWithTitle:titleDescription:accessibilityIdentifier:switchOn:switchBlock:settingItemId:");
     if(!available(c,s,8))return nil;
     BOOL (^block)(id,BOOL)=^BOOL(id cell,BOOL on){
-        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];return YES;
+        [NSUserDefaults.standardUserDefaults setBool:on forKey:key];if([key isEqual:Ksb]&&!on)resetSponsor();if([key isEqual:Khd])qualityID=nil;return YES;
     };
     return ((id(*)(id,SEL,id,id,id,BOOL,id,NSInteger))objc_msgSend)(c,s,title,description,key,enabled(key),block,0);
 }
@@ -107,6 +269,14 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         id ad=switches(@"Chặn quảng cáo",@"Bật khi mở ứng dụng; có thể tắt tại đây",Kad);
         if(bg&&(origBG||origML))[rows addObject:bg];
         if(ad&&origAd)[rows addObject:ad];
+        id sb=switches(@"SponsorBlock",@"Tự bỏ qua đoạn tài trợ; gửi ID video tới sponsor.ajay.app",Ksb);
+        id hd=switches(@"Ưu tiên 1080p",@"Chọn chất lượng tốt nhất không quá 1080p khi có",Khd);
+        id gl=switches(@"Liquid Glass",@"Hiệu ứng kính trên thanh điều hướng (thử nghiệm)",Kglass);
+        id mi=switches(@"Mini Player tăng cường",@"Thử nghiệm; tắt nếu xung đột với YouMod",Kmini);
+        if(origTick&&sb)[rows addObject:sb];
+        if(origTick&&hd)[rows addObject:hd];
+        if(origPivot&&gl)[rows addObject:gl];
+        if(origMini&&mi)[rows addObject:mi];
         Class c=NSClassFromString(@"YTSettingsSectionItem");
         SEL item=NSSelectorFromString(@"itemWithTitle:accessibilityIdentifier:detailTextBlock:selectBlock:");
         if(available(c,item,6)){
@@ -122,8 +292,8 @@ static void category(id t,SEL s,NSUInteger n,id entry){
         }
         SEL modern=NSSelectorFromString(@"setSectionItems:forCategory:title:icon:titleDescription:headerHidden:");
         SEL legacy=NSSelectorFromString(@"setSectionItems:forCategory:title:titleDescription:headerHidden:");
-        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.3",NO);
-        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.3",NO);
+        if(available(vc,modern,8))((void(*)(id,SEL,id,NSUInteger,id,id,id,BOOL))objc_msgSend)(vc,modern,rows,LemCategory,@"LEM Yuno",nil,@"v0.4",NO);
+        else if(available(vc,legacy,7))((void(*)(id,SEL,id,NSUInteger,id,id,BOOL))objc_msgSend)(vc,legacy,rows,LemCategory,@"LEM Yuno",@"v0.4",NO);
     }@catch(NSException *e){NSLog(@"[LEMYuno] Settings: %@",e.reason);}
 }
 static void installSettings(void){
@@ -151,7 +321,7 @@ __attribute__((constructor)) static void initialize(void){
   NSBundle *bundle=NSBundle.mainBundle;
   if(![bundle.bundleIdentifier isEqualToString:@"com.google.ios.youtube"])return;
   if(![[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] isEqualToString:@"21.33.6"])return;
-  [NSUserDefaults.standardUserDefaults registerDefaults:@{Kbg:@YES,Kad:@YES}];
+  [NSUserDefaults.standardUserDefaults registerDefaults:@{Kbg:@YES,Kad:@YES,Ksb:@YES,Khd:@YES,Kglass:@YES,Kmini:@NO}];
   dispatch_async(dispatch_get_main_queue(), ^{
     Class c=NSClassFromString(@"YTMainAppVideoPlayerOverlayViewController");
     SEL s=@selector(viewDidLayoutSubviews);
@@ -159,6 +329,7 @@ __attribute__((constructor)) static void initialize(void){
     origBG=hook(NSClassFromString(@"YTIPlayabilityStatus"),NSSelectorFromString(@"isPlayableInBackground"),(IMP)yesBG,YES);
     origML=hook(NSClassFromString(@"MLVideo"),NSSelectorFromString(@"playableInBackground"),(IMP)yesML,YES);
     origAd=hook(NSClassFromString(@"YTIPlayerResponse"),NSSelectorFromString(@"isMonetized"),(IMP)noAd,YES);
+    installExtra();
     installSettings();
     NSLog(@"[LEMYuno] Loaded settings=%d background=%d ad=%d",origOrder!=NULL,(origBG||origML)!=0,origAd!=NULL);
   });
