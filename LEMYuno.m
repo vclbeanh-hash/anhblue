@@ -1,4 +1,4 @@
-/* LEM Yuno Glass Only 1.5 — independent UIKit implementation.
+/* LEM Yuno Glass Only 1.6 — independent UIKit implementation.
    Visual reference: https://github.com/danielkanan/Yuno/tree/v1.1.1
    No ad, player, network or account hooks. */
 #import <UIKit/UIKit.h>
@@ -9,9 +9,9 @@
 #import <math.h>
 #import <string.h>
 
-static NSString *const buildName=@"LEM Glass Only 1.5";
-static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,feedObserverKey,foldKey,debugKey;
-static IMP oldPivot,oldRight,oldSelect,oldStyle,oldMiniLayout,oldMiniMove,oldFeedMove,oldFeedLayout,oldMiniControllerLayout,oldNativeLayout,oldOutputFrame;
+static NSString *const buildName=@"LEM Glass Only 1.6";
+static char surfaceKey,pillKey,bgKey,oldHiddenKey,rimKey,dragKey,verticalKey,normalFrameKey,compactFrameKey,foldKey;
+static IMP oldPivot,oldRight,oldSelect,oldStyle,oldMiniLayout,oldMiniMove,oldMiniFrame,oldLayerLayout;
 static __weak UIView *currentPivot,*currentMini;
 static __weak UIViewController *currentMiniController;
 static BOOL resizePending=NO;
@@ -140,7 +140,7 @@ cleanup:
     if(c)CGContextRelease(c);if(out)CGContextRelease(out);free(tmp);free(soft);return result;
 }
 
-@interface LEMGlass15Surface : UIView
+@interface LEMGlass16Surface : UIView
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,strong) CALayer *picture;
 @property(nonatomic,strong) UIVisualEffectView *fallback;
@@ -152,7 +152,7 @@ cleanup:
 @property(nonatomic) BOOL topChrome;
 - (void)refresh;
 @end
-@implementation LEMGlass15Surface
+@implementation LEMGlass16Surface
 - (instancetype)initWithFrame:(CGRect)f {
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -196,18 +196,18 @@ cleanup:
     [self.timer invalidate];self.timer=nil;
     if(!self.window){self.picture.contents=nil;return;}
     __weak typeof(self) weak=self;
-    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass15Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
+    self.timer=[NSTimer timerWithTimeInterval:.14 repeats:YES block:^(NSTimer *t){LEMGlass16Surface *s=weak;if(!s){[t invalidate];return;}[s refresh];}];
     self.timer.tolerance=.025;[[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
 }
 - (void)dealloc{[self.timer invalidate];}
 @end
 
 // Edge stays above the old opaque account-page backdrop; it cannot consume touches.
-@interface LEMGlass15Rim : UIView
+@interface LEMGlass16Rim : UIView
 @property(nonatomic,strong) CAGradientLayer *light;
 @property(nonatomic,strong) CAShapeLayer *outline;
 @end
-@implementation LEMGlass15Rim
+@implementation LEMGlass16Rim
 - (instancetype)initWithFrame:(CGRect)f{
     if((self=[super initWithFrame:f])){
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
@@ -227,14 +227,14 @@ cleanup:
 static UIView *branchIn(UIView *child,UIView *ancestor){
     UIView *p=child;while(p&&p.superview!=ancestor)p=p.superview;return p;
 }
-static LEMGlass15Surface *ensureSurface(UIView *host,CGRect f){
-    LEMGlass15Surface *s=objc_getAssociatedObject(host,&surfaceKey);
-    if(!s){s=[[LEMGlass15Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+static LEMGlass16Surface *ensureSurface(UIView *host,CGRect f){
+    LEMGlass16Surface *s=objc_getAssociatedObject(host,&surfaceKey);
+    if(!s){s=[[LEMGlass16Surface alloc] initWithFrame:f];s.host=host;objc_setAssociatedObject(host,&surfaceKey,s,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(s.superview!=host)[host insertSubview:s atIndex:0];
     if(!CGRectEqualToRect(s.frame,f))s.frame=f;
     return s;
 }
-static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass15Surface *surface){
+static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass16Surface *surface){
     // Find the front-most safe insertion point just beneath the first actual tab branch,
     // rather than behind an opaque view inserted by YouTube on per-page style changes.
     NSUInteger first=NSNotFound;
@@ -245,8 +245,8 @@ static void placeBehindTabs(UIView *v,NSArray<UIView *> *items,LEMGlass15Surface
     }}
 }
 static void ensureRim(UIView *host,CGRect frame){
-    LEMGlass15Rim *rim=objc_getAssociatedObject(host,&rimKey);
-    if(!rim){rim=[[LEMGlass15Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    LEMGlass16Rim *rim=objc_getAssociatedObject(host,&rimKey);
+    if(!rim){rim=[[LEMGlass16Rim alloc] initWithFrame:frame];objc_setAssociatedObject(host,&rimKey,rim,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     if(rim.superview!=host)[host addSubview:rim];else if(host.subviews.lastObject!=rim)[host bringSubviewToFront:rim];
     if(!CGRectEqualToRect(rim.frame,frame))rim.frame=frame;
 }
@@ -266,7 +266,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
         [UIView animateWithDuration:.40 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.15 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{pill.transform=CGAffineTransformIdentity;pill.frame=target;pill.layer.cornerRadius=rad;pill.alpha=1;} completion:nil];
     }
 }
-@interface LEMGlass15Drag : NSObject<UIGestureRecognizerDelegate>
+@interface LEMGlass16Drag : NSObject<UIGestureRecognizerDelegate>
 @property(nonatomic,weak) UIView *host;
 @property(nonatomic,weak) UIView *pill;
 @property(nonatomic,weak) UIView *originItem;
@@ -276,7 +276,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 @property(nonatomic) CGRect originalRect;
 - (void)pan:(UIPanGestureRecognizer *)gr;
 @end
-@implementation LEMGlass15Drag
+@implementation LEMGlass16Drag
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer{
     UIView *host=self.host,*pill=self.pill; if(!host||!pill||pill.alpha<.2||!pill.superview)return NO;
     UIPanGestureRecognizer *pan=(UIPanGestureRecognizer *)gestureRecognizer;
@@ -288,7 +288,7 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gr shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return NO;}
 - (void)pan:(UIPanGestureRecognizer *)gr{
     UIView *host=self.host,*pill=self.pill,*parent=pill.superview;
-    LEMGlass15Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
+    LEMGlass16Surface *surface=objc_getAssociatedObject(host,&surfaceKey);
     if(!host||!pill||!parent||!surface)return;
     NSArray *items=tabs(host);
     if(gr.state==UIGestureRecognizerStateBegan){
@@ -335,22 +335,22 @@ static void settle(UIView *pill,CGRect target,BOOL animated){
     }
 }
 @end
-static LEMGlass15Drag *installDrag(UIView *host,UIView *pill){
-    LEMGlass15Drag *d=objc_getAssociatedObject(host,&dragKey);
+static LEMGlass16Drag *installDrag(UIView *host,UIView *pill){
+    LEMGlass16Drag *d=objc_getAssociatedObject(host,&dragKey);
     if(!d){
-        d=[LEMGlass15Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
+        d=[LEMGlass16Drag new];d.host=host;d.gesture=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];
         d.gesture.maximumNumberOfTouches=1;d.gesture.cancelsTouchesInView=YES;d.gesture.delegate=d;
         [host addGestureRecognizer:d.gesture];objc_setAssociatedObject(host,&dragKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     d.pill=pill;return d;
 }
 static void installVertical(UIView *host);
-static void installDebug(UIView *host);
+
 static BOOL containsTabs(UIView *v,NSArray *items){
     for(UIView *i in items)if(i==v||[i isDescendantOfView:v])return YES;return NO;
 }
 static BOOL isNativePlate(UIView *v,UIView *host,NSArray *items){
-    if(!v||v==host||[v isKindOfClass:LEMGlass15Surface.class]||[v isKindOfClass:LEMGlass15Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
+    if(!v||v==host||[v isKindOfClass:LEMGlass16Surface.class]||[v isKindOfClass:LEMGlass16Rim.class]||v==objc_getAssociatedObject(host,&pillKey)||containsTabs(v,items))return NO;
     if([v isKindOfClass:UIControl.class]||[v isKindOfClass:UILabel.class]||[v isKindOfClass:UIScrollView.class])return NO;
     CGRect f=[v convertRect:v.bounds toView:host];
     if(f.size.width<host.bounds.size.width*.87||f.size.height<12||f.size.height>190||CGRectIsEmpty(CGRectIntersection(f,host.bounds)))return NO;
@@ -386,7 +386,7 @@ static void removeOldPlate(UIView *host,NSArray *items){
 static void updatePivot(UIView *host){
     if(!host.window||host.bounds.size.width<160||host.bounds.size.height<30)return;
     NSArray<UIView *> *items=tabs(host);if(items.count<2)return;
-    currentPivot=host;installVertical(host);installDebug(host);
+    currentPivot=host;installVertical(host);
     UIView *content=view(host,@"contentView"),*blur=view(host,@"blurView"),*sep=view(host,@"separatorView");
     NSMutableArray *protected=[items mutableCopy];
     if(content&&content!=host)[protected addObject:content];
@@ -411,14 +411,14 @@ static void updatePivot(UIView *host){
     // Hide only full-width, decorative plain/image/effect views, never buttons or tab ancestors.
     NSArray *holders=content&&content!=host?@[host,content]:@[host];
     for(UIView *parent in holders)for(UIView *v in [parent.subviews copy]){
-        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass15Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
+        if(v==blur||v==sep||v==content||[v isKindOfClass:LEMGlass16Surface.class]||v==objc_getAssociatedObject(host,&pillKey)||v==objc_getAssociatedObject(host,&rimKey))continue;
         if(v.bounds.size.width<parent.bounds.size.width*.87||v.bounds.size.height<25||v.bounds.size.height>180)continue;
         NSString *name=NSStringFromClass(v.class).lowercaseString;
         BOOL decorative=[v isKindOfClass:UIVisualEffectView.class]||[v isKindOfClass:UIImageView.class]||(!v.userInteractionEnabled&&([name containsString:@"background"]||[name containsString:@"backdrop"]||[name containsString:@"blur"]));
         if(decorative)hideSafe(v,protected);
     }
     removeOldPlate(host,items);
-    LEMGlass15Surface *surface=ensureSurface(host,frame);
+    LEMGlass16Surface *surface=ensureSurface(host,frame);
     placeBehindTabs(host,items,surface);
     surface.edge.hidden=YES;[objc_getAssociatedObject(host,&rimKey) removeFromSuperview];
     UIView *pill=objc_getAssociatedObject(host,&pillKey);
@@ -430,7 +430,7 @@ static void updatePivot(UIView *host){
     if(pill.superview!=parent){
         if(parent==host)[host insertSubview:pill aboveSubview:surface];else [parent insertSubview:pill atIndex:0];
     }
-    LEMGlass15Drag *drag=installDrag(host,pill);
+    LEMGlass16Drag *drag=installDrag(host,pill);
     if(drag.dragging)return;
     if(CGRectIsNull(chosen)){pill.alpha=0;return;}
     CGRect target=CGRectIntersection(CGRectInset(frame,4,4),CGRectInset(chosen,3,0));
@@ -451,173 +451,154 @@ static void rightLayout(UIView *v,SEL s){
     if(!v.window||v.bounds.size.width<35||v.bounds.size.width>260||v.bounds.size.height<25||v.bounds.size.height>90)return;
     @try{
         CGRect f=CGRectInset(v.bounds,2,3);if(f.size.width<28||f.size.height<24)return;
-        clear(v);LEMGlass15Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
+        clear(v);LEMGlass16Surface *surface=ensureSurface(v,f);surface.topChrome=YES;
     }@catch(NSException *e){}
 }
 
-// GlassNav.kt v1.1.1: scroll intent drives fold. The native iOS miniplayer
-// owns its geometry; never fight it by writing a UIView transform.
+// Standalone compact mini-player UI. The video and native controls remain intact.
 static BOOL visible(UIView *v){
-    if(!v.window)return NO;
-    for(UIView *p=v;p;p=p.superview)if(p.hidden||p.alpha<.05)return NO;
-    CGRect f=[v convertRect:v.bounds toView:v.window];
-    return !CGRectIsNull(f)&&!CGRectIsEmpty(CGRectIntersection(f,v.window.bounds));
+    if(!v.window)return NO;for(UIView *p=v;p;p=p.superview)if(p.hidden||p.alpha<.05)return NO;
+    CGRect f=[v convertRect:v.bounds toView:v.window];return !CGRectIsNull(f)&&!CGRectIsEmpty(CGRectIntersection(f,v.window.bounds));
 }
 static BOOL boolGetter(id t,NSString *name){
-    SEL q=NSSelectorFromString(name);Method m=t?class_getInstanceMethod([t class],q):NULL;
-    char b[8]={0};if(!m||method_getNumberOfArguments(m)!=2)return NO;
-    method_getReturnType(m,b,sizeof b);if(b[0]!='B'&&b[0]!='c')return NO;
+    SEL q=NSSelectorFromString(name);Method m=t?class_getInstanceMethod([t class],q):NULL;char b[8]={0};
+    if(!m||method_getNumberOfArguments(m)!=2)return NO;method_getReturnType(m,b,sizeof b);if(b[0]!='B'&&b[0]!='c')return NO;
     return ((BOOL(*)(id,SEL))objc_msgSend)(t,q);
 }
-static UIViewController *controllerForMini(UIView *v){
-    Class c=NSClassFromString(@"YTWatchFloatingMiniplayerViewController");
-    if(!c)return nil;
-    for(UIResponder *r=v;r;r=r.nextResponder)if([r isKindOfClass:c])return (UIViewController *)r;
-    UIViewController *known=currentMiniController;
-    if(known&&view(known,@"watchFloatingMiniplayerView")==v)return known;
-    return nil;
+static BOOL busy(UIView *v){
+    return boolGetter(v,@"isCollapsingOrExpanding")||boolGetter(v,@"isRepositioning")||boolGetter(v,@"isResizingWithPinchGesture");
 }
-static CGFloat miniWidth(UIView *v){
-    return visible(v)?[v convertRect:v.bounds toView:v.window].size.width:0;
+static BOOL normalFrame(CGRect f,UIView *v){
+    CGFloat width=v.window.bounds.size.width;
+    return isfinite(f.origin.x)&&isfinite(f.origin.y)&&isfinite(f.size.width)&&isfinite(f.size.height)&&f.size.width>=125&&f.size.height>=55&&width>0&&f.size.width<=width*.85&&f.size.height<=width*.65;
 }
-static void rememberMini(UIView *v,UIViewController *controller){
-    if(!visible(v))return;
-    if(currentMini!=v){
-        currentMini=v;smallestWidth=0;largestWidth=0;resizePending=NO;
+static BOOL canCompact(UIView *v){
+    return visible(v)&&visible(currentPivot)&&v.window==currentPivot.window&&!busy(v)&&v.superview;
+}
+static CGRect compactFrame(CGRect f,UIView *v){
+    CGFloat ratio=MIN(1.,112./f.size.width),w=f.size.width*ratio,h=f.size.height*ratio;
+    CGFloat parentWidth=v.superview.bounds.size.width;
+    BOOL left=CGRectGetMidX(f)<CGRectGetMidX(v.superview.bounds);
+    CGFloat x=left?CGRectGetMinX(f):CGRectGetMaxX(f)-w;
+    if(parentWidth>0)x=MAX(CGRectGetMinX(v.superview.bounds),MIN(CGRectGetMaxX(v.superview.bounds)-w,x));
+    return CGRectMake(x,CGRectGetMaxY(f)-h,w,h);
+}
+static void nativeSetFrame(UIView *v,CGRect frame){
+    ((void(*)(id,SEL,CGRect))oldMiniFrame)(v,@selector(setFrame:),frame);
+}
+static BOOL applyingFrame;
+static void miniFrame(UIView *v,SEL s,CGRect incoming){
+    if(!oldMiniFrame)return;
+    if(applyingFrame||!NSThread.isMainThread){((void(*)(id,SEL,CGRect))oldMiniFrame)(v,s,incoming);return;}
+    if(busy(v)){
+        if(boolGetter(v,@"isResizingWithPinchGesture")||boolGetter(v,@"isRepositioning"))objc_setAssociatedObject(v,&foldKey,@NO,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        ((void(*)(id,SEL,CGRect))oldMiniFrame)(v,s,incoming);return;
     }
-    if(controller)currentMiniController=controller;
-    else if(view(currentMiniController,@"watchFloatingMiniplayerView")!=v)currentMiniController=controllerForMini(v);
-}
-static UIView *layoutOwner(UIView *mini){
-    Class c=NSClassFromString(@"YTWatchLayerView");
-    for(UIView *p=mini.superview;p;p=p.superview)if(c&&[p isKindOfClass:c]&&view(p,@"watchFloatingMiniplayerView")==mini)return p;
-    UIViewController *mc=controllerForMini(mini)?:currentMiniController;
-    id delegate=obj(mc,@"delegate");
-    UIView *v=[delegate isKindOfClass:UIViewController.class]?[(UIViewController *)delegate viewIfLoaded]:nil;
-    if(c&&[v isKindOfClass:c]&&view(v,@"watchFloatingMiniplayerView")==mini)return v;
-    return nil;
-}
-static CGRect outputFrame(id t,SEL s){
-    CGRect f=((CGRect(*)(id,SEL))oldOutputFrame)(t,s);
-    UIView *owner=activeLayoutOwner;
-    if(!nativeLayoutDepth||!owner||![objc_getAssociatedObject(owner,&foldKey) boolValue])return f;
-    UIView *mini=view(owner,@"watchFloatingMiniplayerView");
-    if(!mini||boolGetter(mini,@"isResizingWithPinchGesture")||boolGetter(mini,@"isRepositioning")||boolGetter(mini,@"isCollapsingOrExpanding"))return f;
-    if(!isfinite(f.size.width)||!isfinite(f.size.height)||f.size.width<115||f.size.height<50||f.size.width>owner.bounds.size.width*.85)return f;
-    CGFloat ratio=MIN(1.,MAX(.50,104./f.size.width));
-    CGFloat w=f.size.width*ratio,h=f.size.height*ratio;
-    CGRect compact=CGRectMake(CGRectGetMaxX(f)-w,CGRectGetMaxY(f)-h,w,h);
-    frameHits++;return compact;
-}
-static void nativeLayout(UIView *owner,SEL s,BOOL animated){
-    UIView *mini=view(owner,@"watchFloatingMiniplayerView");
-    // Give native pinch/drag ownership back immediately.
-    if(boolGetter(mini,@"isResizingWithPinchGesture")||boolGetter(mini,@"isRepositioning")){
-        objc_setAssociatedObject(owner,&foldKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(normalFrame(incoming,v)){
+        objc_setAssociatedObject(v,&normalFrameKey,[NSValue valueWithCGRect:incoming],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(canCompact(v)&&[objc_getAssociatedObject(v,&foldKey) boolValue]){
+            incoming=compactFrame(incoming,v);
+            objc_setAssociatedObject(v,&compactFrameKey,[NSValue valueWithCGRect:incoming],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     }
-    UIView *prior=activeLayoutOwner;activeLayoutOwner=owner;nativeLayoutDepth++;
-    @try{((void(*)(id,SEL,BOOL))oldNativeLayout)(owner,s,animated);}
-    @finally{nativeLayoutDepth--;activeLayoutOwner=prior;}
+    ((void(*)(id,SEL,CGRect))oldMiniFrame)(v,s,incoming);
 }
-static BOOL miniReady(void){
-    UIView *v=currentMini,*bar=currentPivot;
-    if(!visible(v)||!visible(bar)||v.window!=bar.window||!oldNativeLayout||!oldOutputFrame||!layoutOwner(v))return NO;
-    if(boolGetter(v,@"isCollapsingOrExpanding")||boolGetter(v,@"isRepositioning")||boolGetter(v,@"isResizingWithPinchGesture")||boolGetter(v,@"isResizingProgrammatically"))return NO;
-    return miniWidth(v)>45;
+static void applyCompact(UIView *v,BOOL compact,BOOL animate){
+    if(!oldMiniFrame||!canCompact(v))return;
+    CGRect f=v.frame;
+    NSValue *saved=objc_getAssociatedObject(v,&normalFrameKey);
+    if(normalFrame(f,v)){saved=[NSValue valueWithCGRect:f];objc_setAssociatedObject(v,&normalFrameKey,saved,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    if(!saved)return;
+    CGRect normal=saved.CGRectValue;
+    if(!normalFrame(normal,v))return;
+    CGRect target=compact?compactFrame(normal,v):normal;
+    objc_setAssociatedObject(v,&foldKey,@(compact),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(compact)objc_setAssociatedObject(v,&compactFrameKey,[NSValue valueWithCGRect:target],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(CGRectEqualToRect(f,target))return;
+    void (^change)(void)=^{
+        applyingFrame=YES;@try{nativeSetFrame(v,target);[v setNeedsLayout];}@finally{applyingFrame=NO;}
+    };
+    if(animate&&!UIAccessibilityIsReduceMotionEnabled())[UIView animateWithDuration:.33 delay:0 usingSpringWithDamping:.82 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:change completion:nil];else change();
 }
-static void requestFold(BOOL compact){
-    if(resizePending||CACurrentMediaTime()-lastFoldAction<.5)return;
-    if(!miniReady()){lastFoldNote=@"Mini/layout chưa sẵn sàng";return;}
-    UIView *v=currentMini,*owner=layoutOwner(v);
-    if([objc_getAssociatedObject(owner,&foldKey) boolValue]==compact)return;
-    foldRequests++;resizePending=YES;lastFoldAction=CACurrentMediaTime();
-    CGFloat before=miniWidth(v);NSUInteger hits=frameHits;
-    objc_setAssociatedObject(owner,&foldKey,@(compact),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    @try{nativeLayout(owner,NSSelectorFromString(@"layoutMiniplayerAnimated:"),!UIAccessibilityIsReduceMotionEnabled());}
-    @catch(NSException *e){objc_setAssociatedObject(owner,&foldKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);lastFoldNote=e.reason;resizePending=NO;return;}
-    __weak UIView *weakV=v;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(.55*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-        if(currentMini==weakV&&visible(weakV))lastFoldNote=[NSString stringWithFormat:@"%.0f → %.0f pt, frame +%lu",before,miniWidth(weakV),(unsigned long)(frameHits-hits)];
-        resizePending=NO;
-    });
+static void observeMini(UIView *v){
+    if(!canCompact(v))return;
+    currentMini=v;
+    if(!objc_getAssociatedObject(v,&foldKey)){
+        // Default to small as soon as native transition has finished. No gesture is required.
+        if(!normalFrame(v.frame,v))return;
+        applyCompact(v,YES,YES);
+    }else if([objc_getAssociatedObject(v,&foldKey) boolValue]&&normalFrame(v.frame,v)&&!applyingFrame){
+        applyCompact(v,YES,NO);
+    }
 }
-static void miniLayout(UIView *v,SEL s){((void(*)(id,SEL))oldMiniLayout)(v,s);rememberMini(v,controllerForMini(v));}
+static void miniLayout(UIView *v,SEL s){
+    ((void(*)(id,SEL))oldMiniLayout)(v,s);
+    if(!applyingFrame&&canCompact(v)){
+        currentMini=v;
+        if(!objc_getAssociatedObject(v,&foldKey)||([objc_getAssociatedObject(v,&foldKey) boolValue]&&normalFrame(v.frame,v))){
+            __weak UIView *weakV=v;dispatch_async(dispatch_get_main_queue(),^{observeMini(weakV);});
+        }
+    }
+}
 static void miniMove(UIView *v,SEL s){
     ((void(*)(id,SEL))oldMiniMove)(v,s);
-    if(v.window)rememberMini(v,controllerForMini(v));
-    else if(currentMini==v){currentMini=nil;currentMiniController=nil;resizePending=NO;smallestWidth=largestWidth=0;}
-}
-static void miniControllerLayout(UIViewController *c,SEL s){
-    ((void(*)(id,SEL))oldMiniControllerLayout)(c,s);
-    UIView *v=view(c,@"watchFloatingMiniplayerView");
-    if(v&&visible(v))rememberMini(v,c);
-}
-@interface LEMGlass15Vertical : NSObject<UIGestureRecognizerDelegate>
-@property(nonatomic,weak) UIView *host;
-- (void)swipe:(UISwipeGestureRecognizer *)g;
-@end
-@implementation LEMGlass15Vertical
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g{return visible(self.host)&&visible(currentMini);}
-- (void)swipe:(UISwipeGestureRecognizer *)g{
-    if(g.state==UIGestureRecognizerStateRecognized)requestFold(g.direction==UISwipeGestureRecognizerDirectionUp);
-}
-@end
-static void installVertical(UIView *host){
-    if(objc_getAssociatedObject(host,&verticalKey))return;
-    LEMGlass15Vertical *d=[LEMGlass15Vertical new];d.host=host;
-    for(NSNumber *dir in @[@(UISwipeGestureRecognizerDirectionUp),@(UISwipeGestureRecognizerDirectionDown)]){
-        UISwipeGestureRecognizer *g=[[UISwipeGestureRecognizer alloc] initWithTarget:d action:@selector(swipe:)];
-        g.direction=dir.unsignedIntegerValue;g.cancelsTouchesInView=YES;g.delegate=d;[host addGestureRecognizer:g];
+    if(v.window){
+        __weak UIView *weakV=v;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(.45*NSEC_PER_SEC)),dispatch_get_main_queue(),^{observeMini(weakV);});
+    }else{
+        if(currentMini==v)currentMini=nil;
+        objc_setAssociatedObject(v,&foldKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v,&normalFrameKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    objc_setAssociatedObject(host,&verticalKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
-// Listen to the existing native collection-view pan. This avoids depending on a
-// single scroll delegate, and prevents dozens of toggles during a single drag.
-@interface LEMGlass15Feed : NSObject
-@property(nonatomic,weak) UIScrollView *scroll;
+static void layerLayout(UIView *v,SEL s){
+    ((void(*)(id,SEL))oldLayerLayout)(v,s);
+    UIView *mini=view(v,@"watchFloatingMiniplayerView");
+    Class c=NSClassFromString(@"YTWatchFloatingMiniplayerWithPersistentControlsView");
+    if(c&&[mini isKindOfClass:c]&&!applyingFrame)observeMini(mini);
+}
+static void requestFold(BOOL compact){
+    UIView *mini=currentMini;
+    if(!canCompact(mini))return;
+    if(CACurrentMediaTime()-lastFoldAction<.30)return;
+    lastFoldAction=CACurrentMediaTime();applyCompact(mini,compact,YES);
+}
+@interface LEMGlass16Vertical : NSObject<UIGestureRecognizerDelegate>
+@property(nonatomic,weak) UIWindow *window;
 @property(nonatomic) BOOL consumed;
 - (void)pan:(UIPanGestureRecognizer *)g;
 @end
-@implementation LEMGlass15Feed
+@implementation LEMGlass16Vertical
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
+    if(!canCompact(currentMini)||currentMini.window!=self.window)return NO;
+    UIView *v=touch.view;
+    if(v==currentMini||[v isDescendantOfView:currentMini])return NO;
+    if(v==currentPivot||[v isDescendantOfView:currentPivot])return YES;
+    for(UIView *p=v;p;p=p.superview){
+        if([p isKindOfClass:UIScrollView.class]){
+            UIScrollView *scroll=(UIScrollView *)p;
+            if(scroll.bounds.size.height>220&&scroll.contentSize.height>scroll.bounds.size.height+45)return YES;
+        }
+    }
+    return NO;
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g{
+    CGPoint p=[(UIPanGestureRecognizer *)g velocityInView:self.window];return fabs(p.y)>fabs(p.x)*1.5;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other{return YES;}
 - (void)pan:(UIPanGestureRecognizer *)g{
-    UIScrollView *v=self.scroll;
-    if(g.state==UIGestureRecognizerStateBegan){self.consumed=NO;return;}
-    if(g.state==UIGestureRecognizerStateEnded||g.state==UIGestureRecognizerStateCancelled||g.state==UIGestureRecognizerStateFailed){self.consumed=NO;return;}
-    if(g.state!=UIGestureRecognizerStateChanged||self.consumed||!v.window||!visible(currentMini)||v.window!=currentPivot.window)return;
-    if(v.bounds.size.height<260||v.contentSize.height<v.bounds.size.height+80)return;
-    CGPoint p=[g translationInView:v];
-    if(fabs(p.y)<48||fabs(p.y)<fabs(p.x)*1.5)return;
-    self.consumed=YES;requestFold(p.y<0);
+    if(g.state==UIGestureRecognizerStateBegan)self.consumed=NO;
+    if((g.state==UIGestureRecognizerStateBegan||g.state==UIGestureRecognizerStateChanged||g.state==UIGestureRecognizerStateEnded)&&!self.consumed){
+        CGPoint d=[g translationInView:self.window];
+        if(fabs(d.y)>34&&fabs(d.y)>fabs(d.x)*1.5){self.consumed=YES;requestFold(d.y<0);}
+    }
 }
 @end
-static void observeFeed(UIScrollView *v){
-    if(!v.window||objc_getAssociatedObject(v,&feedObserverKey))return;
-    LEMGlass15Feed *o=[LEMGlass15Feed new];o.scroll=v;
-    [v.panGestureRecognizer addTarget:o action:@selector(pan:)];
-    objc_setAssociatedObject(v,&feedObserverKey,o,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
-static void feedMove(UIScrollView *v,SEL s){((void(*)(id,SEL))oldFeedMove)(v,s);observeFeed(v);}
-static void feedLayout(UIScrollView *v,SEL s){((void(*)(id,SEL))oldFeedLayout)(v,s);observeFeed(v);}
-@interface LEMGlass15Diagnostics : NSObject
-- (void)show:(UILongPressGestureRecognizer *)g;
-@end
-@implementation LEMGlass15Diagnostics
-- (void)show:(UILongPressGestureRecognizer *)g{
-    if(g.state!=UIGestureRecognizerStateBegan)return;
-    UIViewController *vc=g.view.window.rootViewController;
-    while(vc.presentedViewController)vc=vc.presentedViewController;
-    if(!vc)return;
-    NSString *m=[NSString stringWithFormat:@"Mini: %@ | owner: %@\nLayout: %d | frame: %d\nCuộn: %d\nLượt thu: %lu | frame: %lu\nNền bỏ: %lu\n%@",currentMini?NSStringFromClass(currentMini.class):@"Không thấy",layoutOwner(currentMini)?@"OK":@"Không thấy",oldNativeLayout!=NULL,oldOutputFrame!=NULL,oldFeedMove!=NULL,(unsigned long)foldRequests,(unsigned long)frameHits,(unsigned long)clearedPlates,lastFoldNote];
-    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"LEM Glass 1.5" message:m preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];[vc presentViewController:a animated:YES completion:nil];
-}
-@end
-static void installDebug(UIView *host){
-    if(objc_getAssociatedObject(host,&debugKey))return;
-    LEMGlass15Diagnostics *d=[LEMGlass15Diagnostics new];
-    UILongPressGestureRecognizer *g=[[UILongPressGestureRecognizer alloc] initWithTarget:d action:@selector(show:)];
-    g.numberOfTouchesRequired=2;g.minimumPressDuration=1.1;g.cancelsTouchesInView=NO;
-    [host addGestureRecognizer:g];objc_setAssociatedObject(host,&debugKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+static void installVertical(UIView *host){
+    UIWindow *w=host.window;
+    if(!w||objc_getAssociatedObject(w,&verticalKey))return;
+    LEMGlass16Vertical *d=[LEMGlass16Vertical new];d.window=w;
+    UIPanGestureRecognizer *g=[[UIPanGestureRecognizer alloc] initWithTarget:d action:@selector(pan:)];g.delegate=d;g.maximumNumberOfTouches=1;g.cancelsTouchesInView=NO;g.delaysTouchesBegan=NO;g.delaysTouchesEnded=NO;
+    [w addGestureRecognizer:g];objc_setAssociatedObject(w,&verticalKey,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 static IMP attach(Class c,SEL sel,IMP replacement,const char *types,unsigned n){
     Method m=c?class_getInstanceMethod(c,sel):NULL;
@@ -645,24 +626,18 @@ __attribute__((constructor)) static void start(void){
             }
             Class right=NSClassFromString(@"YTRightNavigationButtons");
             if(right&&[right isSubclassOfClass:UIView.class])oldRight=attach(right,@selector(layoutSubviews),(IMP)rightLayout,"v",2);
-            Class layer=NSClassFromString(@"YTWatchLayerView");
-            if(layer&&[layer isSubclassOfClass:UIView.class])oldNativeLayout=attach(layer,NSSelectorFromString(@"layoutMiniplayerAnimated:"),(IMP)nativeLayout,"vB",3);
-            Class output=NSClassFromString(@"YTWatchMiniplayerLayoutOutput");SEL fs=NSSelectorFromString(@"miniplayerFrame");
-            Method fm=output?class_getInstanceMethod(output,fs):NULL;char ft[128]={0};
-            if(fm&&method_getNumberOfArguments(fm)==2){method_getReturnType(fm,ft,sizeof ft);if(strncmp(ft,"{CGRect=",8)==0){oldOutputFrame=method_getImplementation(fm);class_replaceMethod(output,fs,(IMP)outputFrame,method_getTypeEncoding(fm));}}
             Class mini=NSClassFromString(@"YTWatchFloatingMiniplayerWithPersistentControlsView");
             if(mini&&[mini isSubclassOfClass:UIView.class]){
-                oldMiniLayout=attach(mini,@selector(layoutSubviews),(IMP)miniLayout,"v",2);
-                oldMiniMove=attach(mini,@selector(didMoveToWindow),(IMP)miniMove,"v",2);
+                SEL fs=@selector(setFrame:);Method fm=class_getInstanceMethod(mini,fs);char rt[16]={0},arg[128]={0};
+                if(fm&&method_getNumberOfArguments(fm)==3){method_getReturnType(fm,rt,sizeof rt);method_getArgumentType(fm,2,arg,sizeof arg);if(rt[0]=='v'&&strncmp(arg,"{CGRect=",8)==0){oldMiniFrame=method_getImplementation(fm);class_replaceMethod(mini,fs,(IMP)miniFrame,method_getTypeEncoding(fm));}}
+                if(oldMiniFrame){
+                    oldMiniLayout=attach(mini,@selector(layoutSubviews),(IMP)miniLayout,"v",2);
+                    oldMiniMove=attach(mini,@selector(didMoveToWindow),(IMP)miniMove,"v",2);
+                }
             }
-            Class mc=NSClassFromString(@"YTWatchFloatingMiniplayerViewController");
-            if(mc&&[mc isSubclassOfClass:UIViewController.class])oldMiniControllerLayout=attach(mc,@selector(viewDidLayoutSubviews),(IMP)miniControllerLayout,"v",2);
-            Class feed=NSClassFromString(@"YTCollectionView");
-            if(feed&&[feed isSubclassOfClass:UIScrollView.class]){
-                oldFeedMove=attach(feed,@selector(didMoveToWindow),(IMP)feedMove,"v",2);
-                oldFeedLayout=attach(feed,@selector(layoutSubviews),(IMP)feedLayout,"v",2);
-            }
-            NSLog(@"[%@] pivot=%d right=%d mini=%d native=%d scroll=%d",buildName,oldPivot!=NULL,oldRight!=NULL,oldMiniLayout!=NULL,oldMiniControllerLayout!=NULL,oldFeedMove!=NULL);
+            Class layer=NSClassFromString(@"YTWatchLayerView");
+            if(oldMiniFrame&&layer&&[layer isSubclassOfClass:UIView.class])oldLayerLayout=attach(layer,@selector(layoutSubviews),(IMP)layerLayout,"v",2);
+            NSLog(@"[%@] pivot=%d mini=%d",buildName,oldPivot!=NULL,oldMiniFrame!=NULL);
         });
     }
 }
