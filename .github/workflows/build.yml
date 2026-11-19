@@ -14,7 +14,7 @@ jobs:
         run: |
           mkdir -p dist
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot "$SDK" -fobjc-arc -fblocks -Os -dynamiclib LEMYuno.m -framework Foundation -framework UIKit -framework QuartzCore -Wl,-install_name,@rpath/LEM-Yuno.dylib -o dist/LEM-Yuno.dylib
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot "$SDK" -fobjc-arc -fblocks -Os -dynamiclib LEMYuno.m -framework Foundation -framework UIKit -framework QuartzCore -framework CoreGraphics -Wl,-install_name,@rpath/LEM-Yuno.dylib -o dist/LEM-Yuno.dylib
           codesign --force --sign - dist/LEM-Yuno.dylib
           file dist/LEM-Yuno.dylib
           xcrun vtool -show-build dist/LEM-Yuno.dylib
